@@ -22,6 +22,13 @@ disk.
 - Headless logic test suite (`--selftest`) and an offscreen screenshot mode.
 - A computer opponent for player two (`--cpu`, or press `C` mid-round): it clears
   crates, never walks into a fuse it cannot outrun and never blows itself up.
+- HUD with each player's current loadout (bombs, blast range, speed), the round
+  pips, a `COMPUTER` tag when the AI plays and a smoothed FPS / frame-time readout
+  in the footer.
+- Resizable window: the fixed 720 x 718 canvas is letterboxed and snapped to a
+  whole-number zoom, so the pixel art stays crisp at every size, up to fullscreen.
+- In-game controls panel (`F1`) and a one-key screenshot of the live window
+  (`F2`, written to `bomberboy-shot-N.png`).
 
 ## Requirements
 
@@ -63,10 +70,12 @@ make run
 | Move              | `W` `A` `S` `D`       | Arrow keys                     |
 | Drop a bomb       | `Space`               | `Enter` or right `Ctrl`        |
 
-Global keys: `C` hands player two to the computer and back, `R` restarts the
-round (or starts a rematch once the match is over), `P` pauses, `Esc` quits.
-Player 2 drops a bomb on either `Enter` or right `Ctrl`, so keyboards without a
-usable numpad key still work.
+Global keys: `F1` opens the controls panel (the round is frozen while it is open),
+`F2` saves a screenshot, `F3` shows or hides the FPS counter, `F11` toggles
+fullscreen, `C` hands player two to the computer and back, `R` restarts the round
+(or starts a rematch once the match is over), `P` pauses, `Esc` quits. Player 2
+drops a bomb on either `Enter` or right `Ctrl`, so keyboards without a usable
+numpad key still work. The round also pauses itself when the window loses focus.
 
 ## Rules
 
@@ -111,7 +120,8 @@ normal build shows the pixel-art look immediately; the renderer searches
 game falls back to drawing everything with SFML shapes.
 
 Every sprite is 16 x 16 pixels and is drawn at 48 px (3x) with nearest-neighbour
-filtering, so the art stays crisp:
+filtering, so the art stays crisp; the window then scales that whole canvas by a
+whole-number factor whenever it can (see `--scale` and `F11` below).
 
 | File pattern                       | Sprite                                              |
 | ---------------------------------- | --------------------------------------------------- |
@@ -142,6 +152,9 @@ Usage: bomberboy [options]
   --selftest           run the headless logic checks and exit
   --seed <n>           build the arena from a fixed seed
   --cpu                let the computer play player two
+  --fps <n>            frame cap, 0 runs uncapped (default 60)
+  --scale <n>          start with an n times bigger window (1-4)
+  --fullscreen         start in fullscreen
   --screenshot <file>  render one frame to a PNG instead of opening a window
   --autoplay <s>       scripted play seconds before the screenshot
   -h, --help           show the help text
@@ -153,12 +166,16 @@ Examples:
 ./build/bomberboy --selftest
 ./build/bomberboy --seed 7
 ./build/bomberboy --cpu --seed 7
+./build/bomberboy --fps 0                  # uncapped, the footer shows the result
+./build/bomberboy --scale 2 --fullscreen
 ./build/bomberboy --seed 7 --autoplay 2.6 --screenshot shot.png
 ```
 
 `--screenshot` renders into an offscreen `sf::RenderTexture`, so it needs an
 OpenGL-capable display but never opens a window. It is handy for checking the
-look of a build or for grabbing documentation images.
+look of a build or for grabbing documentation images. During play `F2` grabs the
+live window instead, letterboxing and all, into `bomberboy-shot-1.png`,
+`bomberboy-shot-2.png` and so on.
 
 ## Testing
 
@@ -166,7 +183,7 @@ The whole game logic lives in `bb::Game`, which does not depend on SFML at all.
 That keeps the rules testable from a plain console program:
 
 ```bash
-./build/bomberboy --selftest     # 69 checks with the shipped art, exit code 0
+./build/bomberboy --selftest     # 75 checks with the shipped art, exit code 0
 ctest --test-dir build --output-on-failure
 ```
 
@@ -183,9 +200,14 @@ deterministic.
 Two more checks read the PNG headers in `assets/sprites`: every sprite the
 renderer asks for must be there and must be a square image. That catches renamed
 or half-copied art right after a reskin. They are skipped (and the run reports
-67 checks) when the art is not installed, because the shape fallback is then the
+73 checks) when the art is not installed, because the shape fallback is then the
 expected look. No OpenGL context is needed - only the first 24 bytes of each file
 are read.
+
+Six more checks cover the window scaling: the fixed canvas has to be mapped
+exactly at 1x and 2x, stay centred with bars in an odd-sized window, still fit
+when the window is smaller than the canvas and never produce a degenerate view
+for a zero-sized one. That is pure math on `sf::View`, so it also runs headless.
 
 ## Project layout
 
@@ -227,6 +249,16 @@ docs/*.png              screenshots used by this README
 - **Sprites.** `SpriteSet` loads the PNGs once at start-up and the renderer only
   falls back to shapes when a sprite is missing, so the game never depends on the
   art being installed.
+- **Window and UI.** The renderer always draws the same 720 x 718 canvas and
+  `Renderer::viewFor()` maps it onto the window: the canvas is centred, the spare
+  space becomes bars, and the zoom snaps to a whole number whenever that keeps at
+  least 85% of the window, so resized and fullscreen windows keep the art crisp
+  instead of blurring it. Re-creating the window for `F11` drops the OpenGL
+  context, so `reloadAssets()` re-uploads the font and the sprite textures.
+- **Frame timing.** The simulation never advances more than 50 ms per frame, so a
+  stall cannot push a player through a wall, while the footer readout follows the
+  real frame time and is smoothed with an exponential moving average: a stutter
+  shows up without turning the number into noise. `--fps 0` lifts the cap.
 - **Determinism.** All randomness comes from one `std::mt19937` seeded through the
   `Game` constructor, so `--seed` plus a fixed input script reproduces a round
   exactly. That is how the screenshot mode produces its action frame.

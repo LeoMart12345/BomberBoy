@@ -4,8 +4,10 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <utility>
 
 namespace bb {
 namespace {
@@ -26,6 +28,16 @@ const sf::Color kBrickMortar(104, 56, 30);
 const sf::Color kBrickEdge(84, 44, 22);
 const sf::Color kTextPrimary(228, 236, 246);
 const sf::Color kTextMuted(126, 143, 162);
+const sf::Color kStatusGood(112, 220, 160);
+const sf::Color kStatusWarn(232, 192, 96);
+const sf::Color kStatusBad(240, 118, 104);
+
+/// Compact "3.6" style speed readout for the HUD.
+std::string formatSpeed(float speed) {
+  char buffer[16];
+  std::snprintf(buffer, sizeof(buffer), "%.1f", speed);
+  return buffer;
+}
 
 sf::Color playerColor(int index) {
   return index == 1 ? sf::Color(255, 118, 74) : sf::Color(86, 200, 255);
@@ -49,6 +61,12 @@ bool readable(const char* path) {
 }  // namespace
 
 Renderer::Renderer(sf::RenderTarget& target) : m_target(target) {
+  loadFont();
+  // Sprite art is optional: without it every draw routine falls back to shapes.
+  m_sprites.load();
+}
+
+void Renderer::loadFont() {
   static const std::array<const char*, 20> kFontCandidates = {
       "assets/font.ttf",
       "font.ttf",
@@ -71,9 +89,20 @@ Renderer::Renderer(sf::RenderTarget& target) : m_target(target) {
       "C:/Windows/Fonts/arialbd.ttf",
       "C:/Windows/Fonts/segoeuib.ttf"};
 
+  m_hasFont = false;
+
+  // After a context switch the same font file is loaded again first.
+  if (!m_fontPath.empty() && m_font.loadFromFile(m_fontPath)) {
+    m_hasFont = true;
+    return;
+  }
+  m_fontPath.clear();
+
   if (const char* custom = std::getenv("BOMBERBOY_FONT")) {
     if (readable(custom) && m_font.loadFromFile(custom)) {
       m_hasFont = true;
+      m_fontPath = custom;
+      return;
     }
   }
 
@@ -81,11 +110,37 @@ Renderer::Renderer(sf::RenderTarget& target) : m_target(target) {
     const char* path = kFontCandidates[i];
     if (readable(path) && m_font.loadFromFile(path)) {
       m_hasFont = true;
+      m_fontPath = path;
     }
   }
+}
 
-  // Sprite art is optional: without it every draw routine falls back to shapes.
+void Renderer::reloadAssets() {
+  // Recreating the window drops the OpenGL context, and with it every texture.
+  loadFont();
+  m_sprites = SpriteSet{};
   m_sprites.load();
+}
+
+sf::View Renderer::viewFor(const sf::Vector2u& windowSize) {
+  const float logicalWidth = static_cast<float>(kWindowWidth);
+  const float logicalHeight = static_cast<float>(kWindowHeight);
+  const float windowWidth = static_cast<float>(std::max(windowSize.x, 1u));
+  const float windowHeight = static_cast<float>(std::max(windowSize.y, 1u));
+
+  float scale = std::min(windowWidth / logicalWidth, windowHeight / logicalHeight);
+  // Whole-number zoom keeps every art pixel the same size, but only when it does
+  // not waste too much of the window. Below 1x there is nothing to snap.
+  if (scale >= 1.f && std::floor(scale) >= scale * 0.85f) {
+    scale = std::floor(scale);
+  }
+  scale = std::max(scale, 0.05f);
+
+  // The canvas is centred; whatever is left over shows the clear colour.
+  const float viewWidth = windowWidth / scale;
+  const float viewHeight = windowHeight / scale;
+  return sf::View(sf::FloatRect((logicalWidth - viewWidth) * 0.5f, (logicalHeight - viewHeight) * 0.5f,
+                                viewWidth, viewHeight));
 }
 
 float Renderer::fieldTop() { return static_cast<float>(kHudHeight); }
@@ -148,6 +203,66 @@ void Renderer::drawText(const std::string& text, unsigned size, float x, float y
   m_target.draw(label);
 }
 
+float Renderer::textWidth(const std::string& text, unsigned size, bool bold) {
+  if (!m_hasFont) {
+    // Rough stand-in so the layout does not collapse when no font was found.
+    return static_cast<float>(text.size()) * static_cast<float>(size) * 0.58f;
+  }
+  sf::Text label;
+  label.setFont(m_font);
+  label.setString(text);
+  label.setCharacterSize(size);
+  if (bold) {
+    label.setStyle(sf::Text::Bold);
+  }
+  return label.getLocalBounds().width;
+}
+
+void Renderer::drawTextLeft(const std::string& text, unsigned size, float x, float centerY,
+                            sf::Color color) {
+  if (!m_hasFont) {
+    return;
+  }
+  sf::Text label;
+  label.setFont(m_font);
+  label.setString(text);
+  label.setCharacterSize(size);
+  label.setFillColor(color);
+  label.setStyle(sf::Text::Bold);
+  const sf::FloatRect bounds = label.getLocalBounds();
+  label.setPosition(std::round(x - bounds.left),
+                    std::round(centerY - bounds.top - bounds.height * 0.5f));
+  m_target.draw(label);
+}
+
+void Renderer::drawTextRight(const std::string& text, unsigned size, float x, float centerY,
+                             sf::Color color) {
+  drawTextLeft(text, size, x - textWidth(text, size), centerY, color);
+}
+
+void Renderer::drawStatIcon(PowerUpKind kind, const sf::Vector2f& center, float size) {
+  const auto index = static_cast<std::size_t>(kind);
+  if (m_sprites.ready() && index < m_sprites.powerUp.size()) {
+    drawSprite(m_sprites.powerUp[index], center, size);
+    return;
+  }
+
+  sf::Color fill(230, 190, 90);
+  if (kind == PowerUpKind::ExtraRange) {
+    fill = sf::Color(240, 120, 70);
+  } else if (kind == PowerUpKind::Speed) {
+    fill = sf::Color(110, 220, 160);
+  }
+
+  sf::RectangleShape badge(sf::Vector2f(size, size));
+  badge.setOrigin(size * 0.5f, size * 0.5f);
+  badge.setPosition(center);
+  badge.setFillColor(sf::Color(fill.r, fill.g, fill.b, 40));
+  badge.setOutlineThickness(1.5f);
+  badge.setOutlineColor(fill);
+  m_target.draw(badge);
+}
+
 void Renderer::drawPip(float x, float y, sf::Color color, bool filled) {
   constexpr float kRadius = 6.f;
   sf::CircleShape pip(kRadius, 20);
@@ -163,7 +278,7 @@ void Renderer::drawPip(float x, float y, sf::Color color, bool filled) {
   m_target.draw(pip);
 }
 
-void Renderer::draw(const Game& game, bool paused) {
+void Renderer::draw(const Game& game, const UiState& ui) {
   m_time += std::clamp(m_clock.restart().asSeconds(), 0.f, 0.1f);
 
   m_target.clear(kBackground);
@@ -174,9 +289,12 @@ void Renderer::draw(const Game& game, bool paused) {
   drawFlames(game);
   drawPlayers(game);
   drawBombMarkers(game);
-  drawHud(game);
-  drawFooter();
-  drawOverlays(game, paused);
+  drawHud(game, ui);
+  drawFooter(ui);
+  drawOverlays(game, ui);
+  if (ui.showHelp) {
+    drawHelpPanel();
+  }
 }
 
 void Renderer::drawFloor() {
@@ -652,7 +770,7 @@ void Renderer::drawPlayer(const Player& player, int index) {
   }
 }
 
-void Renderer::drawHud(const Game& game) {
+void Renderer::drawHud(const Game& game, const UiState& ui) {
   const float width = static_cast<float>(kWindowWidth);
 
   sf::RectangleShape bar(sf::Vector2f(width, static_cast<float>(kHudHeight)));
@@ -664,24 +782,68 @@ void Renderer::drawHud(const Game& game) {
   line.setFillColor(kHudLine);
   m_target.draw(line);
 
-  const auto& scores = game.scores();
-  for (int i = 0; i < kPlayerCount; ++i) {
-    const float blockX = i == 0 ? 116.f : width - 116.f;
-    const sf::Color color = playerColor(i);
-    drawText("PLAYER " + std::to_string(i + 1), 16, blockX, 20.f, color);
-    for (int pip = 0; pip < game.roundsToWin(); ++pip) {
-      const float pipX = blockX + (static_cast<float>(pip) - (game.roundsToWin() - 1) * 0.5f) * 20.f;
-      drawPip(pipX, 46.f, color, pip < scores[static_cast<std::size_t>(i)]);
-    }
-  }
+  drawPlayerBlock(game, 0, false, ui.cpuPlayer == 0);
+  drawPlayerBlock(game, 1, true, ui.cpuPlayer == 1);
 
   drawText("ROUND " + std::to_string(game.roundNumber()), 16, width * 0.5f, 19.f, kTextPrimary);
-  drawText("FIRST TO " + std::to_string(game.roundsToWin()), 11, width * 0.5f, 42.f,
-           kTextMuted);
+  drawText("FIRST TO " + std::to_string(game.roundsToWin()), 11, width * 0.5f, 41.f, kTextMuted);
 }
 
+void Renderer::drawPlayerBlock(const Game& game, int index, bool rightAligned, bool computer) {
+  constexpr float kMargin = 18.f;
+  constexpr float kPipSpacing = 18.f;
+  constexpr float kIconSize = 16.f;  // sprites are 16x16, so this is an exact 1:1 draw
+  constexpr float kIconGap = 4.f;
+  constexpr float kItemGap = 14.f;
+  constexpr float kNameY = 15.f;
+  constexpr float kPipY = 35.f;
+  constexpr float kStatsY = 53.f;
 
-void Renderer::drawFooter() {
+  const auto slot = static_cast<std::size_t>(index);
+  const Player& player = game.players()[slot];
+  const float anchor = rightAligned ? static_cast<float>(kWindowWidth) - kMargin : kMargin;
+  const sf::Color color = playerColor(index);
+  const sf::Color labelColor =
+      player.alive ? color : sf::Color(color.r, color.g, color.b, 110);
+
+  const std::string name = computer ? "COMPUTER" : "PLAYER " + std::to_string(index + 1);
+  if (rightAligned) {
+    drawTextRight(name, 15, anchor, kNameY, labelColor);
+  } else {
+    drawTextLeft(name, 15, anchor, kNameY, labelColor);
+  }
+
+  const int roundsToWin = game.roundsToWin();
+  const int wins = game.scores()[slot];
+  const float pipRowWidth = static_cast<float>(std::max(roundsToWin - 1, 0)) * kPipSpacing;
+  float pipX = rightAligned ? anchor - pipRowWidth : anchor;
+  for (int pip = 0; pip < roundsToWin; ++pip) {
+    drawPip(pipX, kPipY, color, pip < wins);
+    pipX += kPipSpacing;
+  }
+
+  // Current loadout: bombs, blast range and speed, read straight off the player.
+  const std::array<std::pair<PowerUpKind, std::string>, 3> stats = {{
+      {PowerUpKind::ExtraBomb, std::to_string(player.bombCapacity)},
+      {PowerUpKind::ExtraRange, std::to_string(player.blastRange)},
+      {PowerUpKind::Speed, formatSpeed(player.moveSpeed)},
+  }};
+
+  float statsWidth = 0.f;
+  for (const auto& stat : stats) {
+    statsWidth += kIconSize + kIconGap + textWidth(stat.second, 11) + kItemGap;
+  }
+  statsWidth -= kItemGap;
+
+  float cursor = rightAligned ? anchor - statsWidth : anchor;
+  for (const auto& stat : stats) {
+    drawStatIcon(stat.first, sf::Vector2f(cursor + kIconSize * 0.5f, kStatsY), kIconSize);
+    drawTextLeft(stat.second, 11, cursor + kIconSize + kIconGap, kStatsY, kTextMuted);
+    cursor += kIconSize + kIconGap + textWidth(stat.second, 11) + kItemGap;
+  }
+}
+
+void Renderer::drawFooter(const UiState& ui) {
   const float width = static_cast<float>(kWindowWidth);
   const float top = static_cast<float>(kWindowHeight - kFooterHeight);
 
@@ -695,14 +857,32 @@ void Renderer::drawFooter() {
   line.setFillColor(kHudLine);
   m_target.draw(line);
 
-  drawText("P1  WASD + SPACE    P2  ARROWS + ENTER    R  RESTART    P  PAUSE    ESC  QUIT", 11,
-           width * 0.5f, top + static_cast<float>(kFooterHeight) * 0.5f, kTextMuted);
+  const float centerY = top + static_cast<float>(kFooterHeight) * 0.5f;
+  drawTextLeft("F1 CONTROLS    F2 SHOT    F3 FPS    C CPU    R RESTART    P PAUSE", 11, 14.f,
+               centerY, kTextMuted);
+
+  if (ui.showFps) {
+    const int fps = static_cast<int>(std::round(ui.framesPerSecond));
+    char buffer[48];
+    std::snprintf(buffer, sizeof(buffer), "%d FPS   %.1f MS", fps,
+                  static_cast<double>(ui.frameMilliseconds));
+    const sf::Color color =
+        fps >= 55 ? kStatusGood : (fps >= 30 ? kStatusWarn : kStatusBad);
+    drawTextRight(buffer, 11, width - 14.f, centerY, color);
+  }
 }
 
-void Renderer::drawOverlays(const Game& game, bool paused) {
+void Renderer::drawOverlays(const Game& game, const UiState& ui) {
   const float width = static_cast<float>(kWindowWidth);
   const float fieldHeight = static_cast<float>(kRows) * kTileSize;
   const float centerY = fieldTop() + fieldHeight * 0.5f;
+
+  const auto playerLabel = [&ui](int index) {
+    if (index == ui.cpuPlayer) {
+      return std::string("COMPUTER");
+    }
+    return "PLAYER " + std::to_string(index + 1);
+  };
 
   if (game.state() == RoundState::RoundOver) {
     sf::RectangleShape panel(sf::Vector2f(width, fieldHeight));
@@ -716,39 +896,91 @@ void Renderer::drawOverlays(const Game& game, bool paused) {
 
     if (game.matchOver()) {
       const int winner = game.matchWinner();
-      title = "PLAYER " + std::to_string(winner + 1) + " WINS THE MATCH!";
-      subtitle = "Press R for a rematch";
+      title = playerLabel(winner) + " WINS THE MATCH!";
+      subtitle = "R  rematch      F1  controls";
       if (winner >= 0) {
         titleColor = playerColor(winner);
       }
     } else if (game.roundWinner() >= 0) {
       const int winner = game.roundWinner();
-      title = "PLAYER " + std::to_string(winner + 1) + " TAKES THE ROUND";
-      subtitle = "Press R for the next round";
+      title = playerLabel(winner) + " TAKES THE ROUND";
+      subtitle = "R  next round      F1  controls";
       titleColor = playerColor(winner);
     } else {
       title = "DOUBLE KNOCKOUT";
-      subtitle = "Press R to play the round again";
+      subtitle = "R  replay the round";
     }
 
-    drawText(title, 30, width * 0.5f, centerY - 24.f, titleColor);
+    drawText(title, 30, width * 0.5f, centerY - 62.f, titleColor);
 
     const auto& scores = game.scores();
-    const std::string scoreLine = "SCORE  " + std::to_string(scores[0]) + " - " +
-                                  std::to_string(scores[1]);
-    drawText(scoreLine, 15, width * 0.5f, centerY + 16.f, kTextMuted);
-    drawText(subtitle, 14, width * 0.5f, centerY + 48.f, kTextPrimary);
+    drawText(std::to_string(scores[0]), 44, width * 0.5f - 74.f, centerY + 2.f, playerColor(0));
+    drawText("-", 28, width * 0.5f, centerY + 2.f, kTextMuted);
+    drawText(std::to_string(scores[1]), 44, width * 0.5f + 74.f, centerY + 2.f, playerColor(1));
+
+    drawText(subtitle, 14, width * 0.5f, centerY + 66.f, kTextPrimary);
   }
 
-  if (paused) {
+  if (ui.paused) {
     sf::RectangleShape panel(sf::Vector2f(width, fieldHeight));
     panel.setPosition(0.f, fieldTop());
-    panel.setFillColor(sf::Color(6, 10, 15, 140));
+    panel.setFillColor(sf::Color(6, 10, 15, 150));
     m_target.draw(panel);
 
-    drawText("PAUSED", 34, width * 0.5f, centerY - 12.f, kTextPrimary);
-    drawText("Press P to resume", 14, width * 0.5f, centerY + 26.f, kTextMuted);
+    drawText("PAUSED", 34, width * 0.5f, centerY - 28.f, kTextPrimary);
+    drawText("P  resume      R  restart      F1  controls", 14, width * 0.5f, centerY + 20.f,
+             kTextMuted);
   }
+}
+
+void Renderer::drawHelpPanel() {
+  struct Row {
+    const char* keys;
+    const char* action;
+  };
+
+  // Every binding the game listens for, so the help can never fall behind it.
+  static const std::array<Row, 11> controls = {{
+      {"W A S D", "Player 1 moves"},
+      {"SPACE", "Player 1 drops a bomb"},
+      {"ARROWS", "Player 2 moves"},
+      {"ENTER", "Player 2 drops a bomb"},
+      {"C", "Computer takes player two over"},
+      {"R", "Restart the round or the match"},
+      {"P", "Pause the match"},
+      {"F1", "Show or hide this panel"},
+      {"F2", "Save a screenshot of the window"},
+      {"F3", "Show or hide the FPS counter"},
+      {"F11", "Fullscreen or windowed"},
+  }};
+
+  const float width = static_cast<float>(kWindowWidth);
+  const float fieldHeight = static_cast<float>(kRows) * kTileSize;
+  const float panelWidth = 600.f;
+  const float panelHeight = 360.f;
+  const float left = (width - panelWidth) * 0.5f;
+  const float top = fieldTop() + (fieldHeight - panelHeight) * 0.5f;
+
+  sf::RectangleShape panel(sf::Vector2f(panelWidth, panelHeight));
+  panel.setPosition(left, top);
+  panel.setFillColor(sf::Color(10, 15, 22, 240));
+  panel.setOutlineThickness(2.f);
+  panel.setOutlineColor(kHudLine);
+  m_target.draw(panel);
+
+  drawText("CONTROLS", 22, width * 0.5f, top + 34.f, kTextPrimary);
+
+  const float keysX = left + 152.f;
+  const float actionX = left + 176.f;
+  float y = top + 70.f;
+  for (const Row& row : controls) {
+    drawTextRight(row.keys, 13, keysX, y, kTextPrimary);
+    drawTextLeft(row.action, 13, actionX, y, kTextMuted);
+    y += 22.f;
+  }
+
+  drawText("Trap the other player in your flames - crates hide power-ups.", 11, width * 0.5f,
+           top + panelHeight - 20.f, kTextMuted);
 }
 
 }  // namespace bb
