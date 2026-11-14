@@ -215,10 +215,6 @@ docs/*.png              screenshots used by this README
   Carlito, FreeSans, Open Sans, Cantarell, Adwaita, Arial). Set
   `BOMBERBOY_FONT=/path/to/font.ttf` to force a specific font, or drop one at
   `assets/font.ttf`. Without any font the game still runs, it just skips the text.
-- **Fonts.** The renderer probes a list of common system fonts (DejaVu, Liberation,
-  Carlito, FreeSans, Open Sans, Cantarell, Adwaita, Arial). Set
-  `BOMBERBOY_FONT=/path/to/font.ttf` to force a specific font, or drop one at
-  `assets/font.ttf`. Without any font the game still runs, it just skips the text.
 
 ## License
 
