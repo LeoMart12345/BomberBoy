@@ -7,6 +7,7 @@
 
 #include <SFML/Graphics.hpp>
 
+#include "ai.hpp"
 #include "game.hpp"
 #include "renderer.hpp"
 #include "selftest.hpp"
@@ -48,12 +49,14 @@ void printUsage() {
             << "Usage: bomberboy [options]\n"
             << "  --selftest     run the headless logic checks and exit\n"
             << "  --seed <n>     build the arena from a fixed seed\n"
+            << "  --cpu          let the computer play player two\n"
             << "  --screenshot <file>  render one frame to a PNG instead of opening a window\n"
             << "  --autoplay <s>       scripted play seconds before the screenshot\n"
             << "  -h, --help     show this help\n\n"
             << "Controls\n"
             << "  Player 1   W A S D to move, Space to drop a bomb\n"
             << "  Player 2   Arrow keys to move, Enter or Right Ctrl to drop a bomb\n"
+            << "  C  hand player two to the computer (or take it back)\n"
             << "  R  restart round (or rematch once the match is over)\n"
             << "  P  pause    Esc  quit\n";
 }
@@ -110,6 +113,7 @@ bool saveScreenshot(const std::string& path, bool hasSeed, std::uint32_t seed, f
 int main(int argc, char** argv) {
   bool runTests = false;
   bool hasSeed = false;
+  bool cpuOpponent = false;
   std::uint32_t seed = 0;
   std::string screenshotPath;
   float autoplay = 0.0f;
@@ -118,6 +122,8 @@ int main(int argc, char** argv) {
     const std::string argument = argv[i];
     if (argument == "--selftest" || argument == "--test") {
       runTests = true;
+    } else if (argument == "--cpu") {
+      cpuOpponent = true;
     } else if (argument == "--seed" && i + 1 < argc) {
       seed = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10));
       hasSeed = true;
@@ -150,6 +156,7 @@ int main(int argc, char** argv) {
   window.setKeyRepeatEnabled(false);
 
   bb::Game game = hasSeed ? bb::Game(seed) : bb::Game();
+  bb::AiBrain brain(1);
   bb::Renderer renderer(window);
   if (!renderer.hasFont()) {
     std::cerr << "warning: no system font found, HUD text will be hidden\n";
@@ -181,9 +188,14 @@ int main(int argc, char** argv) {
           }
           paused = false;
           bombPressed = {};
+          brain.reset();
         } else if (event.key.code == sf::Keyboard::P) {
           paused = !paused;
           bombPressed = {};
+        } else if (event.key.code == sf::Keyboard::C) {
+          cpuOpponent = !cpuOpponent;
+          bombPressed = {};
+          brain.reset();
         } else {
           const int who = bombKeyPlayer(event.key.code);
           if (who >= 0) {
@@ -195,9 +207,14 @@ int main(int argc, char** argv) {
 
     const float dt = std::min(frameClock.restart().asSeconds(), 0.05f);
     if (!paused) {
-      std::array<bb::PlayerInput, bb::kPlayerCount> inputs{readPlayerOne(), readPlayerTwo()};
-      for (std::size_t i = 0; i < inputs.size(); ++i) {
-        inputs[i].dropBomb = bombPressed[i];
+      std::array<bb::PlayerInput, bb::kPlayerCount> inputs{};
+      inputs[0] = readPlayerOne();
+      inputs[0].dropBomb = bombPressed[0];
+      if (cpuOpponent) {
+        inputs[1] = brain.think(game, dt);
+      } else {
+        inputs[1] = readPlayerTwo();
+        inputs[1].dropBomb = bombPressed[1];
       }
       game.update(dt, inputs);
     }

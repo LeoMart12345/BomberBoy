@@ -14,6 +14,7 @@ find_package(SFML 2.5 COMPONENTS graphics window system REQUIRED)
 add_executable(bomberboy
   src/main.cpp
   src/game.cpp
+  src/ai.cpp
   src/renderer.cpp
   src/assets.cpp
   src/selftest.cpp

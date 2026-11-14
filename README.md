@@ -20,6 +20,8 @@ disk.
 - 16 x 16 pixel-art sprites for tiles, bombers, bombs, flames and pickups, drawn
   at 3x zoom with nearest-neighbour scaling.
 - Headless logic test suite (`--selftest`) and an offscreen screenshot mode.
+- A computer opponent for player two (`--cpu`, or press `C` mid-round): it clears
+  crates, never walks into a fuse it cannot outrun and never blows itself up.
 
 ## Requirements
 
@@ -61,9 +63,10 @@ make run
 | Move              | `W` `A` `S` `D`       | Arrow keys                     |
 | Drop a bomb       | `Space`               | `Enter` or right `Ctrl`        |
 
-Global keys: `R` restarts the round (or starts a rematch once the match is over),
-`P` pauses, `Esc` quits. Player 2 drops a bomb on either `Enter` or right `Ctrl`,
-so keyboards without a usable numpad key still work.
+Global keys: `C` hands player two to the computer and back, `R` restarts the
+round (or starts a rematch once the match is over), `P` pauses, `Esc` quits.
+Player 2 drops a bomb on either `Enter` or right `Ctrl`, so keyboards without a
+usable numpad key still work.
 
 ## Rules
 
@@ -138,6 +141,7 @@ reviewable as code.
 Usage: bomberboy [options]
   --selftest           run the headless logic checks and exit
   --seed <n>           build the arena from a fixed seed
+  --cpu                let the computer play player two
   --screenshot <file>  render one frame to a PNG instead of opening a window
   --autoplay <s>       scripted play seconds before the screenshot
   -h, --help           show the help text
@@ -148,6 +152,7 @@ Examples:
 ```bash
 ./build/bomberboy --selftest
 ./build/bomberboy --seed 7
+./build/bomberboy --cpu --seed 7
 ./build/bomberboy --seed 7 --autoplay 2.6 --screenshot shot.png
 ```
 
@@ -161,7 +166,7 @@ The whole game logic lives in `bb::Game`, which does not depend on SFML at all.
 That keeps the rules testable from a plain console program:
 
 ```bash
-./build/bomberboy --selftest     # 65 checks with the shipped art, exit code 0
+./build/bomberboy --selftest     # 69 checks with the shipped art, exit code 0
 ctest --test-dir build --output-on-failure
 ```
 
@@ -170,12 +175,15 @@ lanes and the crate next to each spawn), border collision, bomb placement and fu
 timing, the opening bomb destroying a crate while the bomber escapes, the
 ownership rules for dropped bombs, chain reactions, round resets, the match flow
 and a seeded random-play stress test that keeps checking for players stuck inside
-walls or bricks.
+walls or bricks. Three more checks let the computer opponent play on its own and
+assert that it drops bombs, clears crates and never kills itself; a fourth feeds
+two brains the same match and requires identical inputs, so the opponent stays
+deterministic.
 
 Two more checks read the PNG headers in `assets/sprites`: every sprite the
 renderer asks for must be there and must be a square image. That catches renamed
 or half-copied art right after a reskin. They are skipped (and the run reports
-63 checks) when the art is not installed, because the shape fallback is then the
+67 checks) when the art is not installed, because the shape fallback is then the
 expected look. No OpenGL context is needed - only the first 24 bytes of each file
 are read.
 
@@ -185,6 +193,7 @@ are read.
 CMakeLists.txt          CMake build (also registers the CTest self-test)
 Makefile                plain g++ build: make, make run, make test, make assets
 src/game.hpp  game.cpp  arena, players, bombs, flames, power-ups, scoring (SFML-free)
+src/ai.hpp  ai.cpp      the computer opponent that drives player two
 src/renderer.*          sprite and shape drawing: tiles, bombs, flames, players, HUD
 src/assets.*            sprite-sheet loading and the assets/sprites search path
 src/selftest.*          the headless checks behind --selftest
@@ -205,6 +214,16 @@ docs/*.png              screenshots used by this README
 - **Movement.** Strictly four-directional. Inputs are advanced in six sub-steps
   per frame and the player is gently snapped towards the centre of the corridor,
   which prevents tunnelling through walls and getting caught on corners.
+- **Computer opponent.** `AiBrain` reads nothing but the public `Game` state and
+  its own seeded `std::mt19937`, so a seeded match replays identically. It decides
+  one tile at a time and only from the middle of a tile, because the game hurts
+  whatever tile the body box touches - a brain that stops on a tile boundary can
+  be caught by the blast covering the tile it just left. Every bomb gets a burn
+  time that follows chain reactions, and the opponent may only step onto a
+  burning tile when it can be off it again before the blast arrives; a drop is
+  only made when the whole way out fits that budget with a little slack, and the
+  escape it was checked against stays committed instead of being re-planned on
+  the next frame, when the fuse has already ticked down.
 - **Sprites.** `SpriteSet` loads the PNGs once at start-up and the renderer only
   falls back to shapes when a sprite is missing, so the game never depends on the
   art being installed.

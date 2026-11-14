@@ -8,6 +8,7 @@
 #include <random>
 #include <string>
 
+#include "ai.hpp"
 #include "assets.hpp"
 #include "game.hpp"
 
@@ -509,6 +510,80 @@ void testSpriteArt(TestReport& report) {
   }
 }
 
+
+bool sameInput(const PlayerInput& a, const PlayerInput& b) {
+  return a.up == b.up && a.down == b.down && a.left == b.left && a.right == b.right &&
+         a.dropBomb == b.dropBomb;
+}
+
+void testAiOpponent(TestReport& report) {
+  std::cout << "computer opponent\n";
+
+  bool droppedBomb = false;
+  bool clearedCrate = false;
+  bool died = false;
+
+  for (const std::uint32_t seed : {3u, 7u, 21u}) {
+    Game game(seed);
+    AiBrain brain(1);
+    int bricks = countBricks(game);
+
+    // Player one never moves or bombs here, so anything the brain walks into is
+    // its own bomb.
+    for (int frame = 0; frame < 40 * kFramesPerSecond; ++frame) {
+      if (game.state() == RoundState::RoundOver) {
+        game.resetRound();
+        brain.reset();
+        bricks = countBricks(game);
+        continue;
+      }
+
+      auto inputs = idleInputs();
+      inputs[1] = brain.think(game, kStep);
+      game.update(kStep, inputs);
+
+      if (!game.bombs().empty()) {
+        droppedBomb = true;
+      }
+      if (!game.players()[1].alive) {
+        died = true;
+      }
+
+      const int current = countBricks(game);
+      if (current < bricks) {
+        clearedCrate = true;
+      }
+      bricks = current;
+    }
+  }
+
+  report.check(droppedBomb, "the computer opponent drops bombs");
+  report.check(clearedCrate, "the computer opponent clears crates");
+  report.check(!died, "the computer opponent never blows itself up");
+
+  bool deterministic = true;
+  Game first(11u);
+  Game second(11u);
+  AiBrain firstBrain(1);
+  AiBrain secondBrain(1);
+  for (int frame = 0; frame < 20 * kFramesPerSecond && deterministic; ++frame) {
+    const PlayerInput firstInput = firstBrain.think(first, kStep);
+    const PlayerInput secondInput = secondBrain.think(second, kStep);
+    if (!sameInput(firstInput, secondInput)) {
+      deterministic = false;
+    }
+
+    auto firstInputs = idleInputs();
+    firstInputs[1] = firstInput;
+    first.update(kStep, firstInputs);
+
+    auto secondInputs = idleInputs();
+    secondInputs[1] = secondInput;
+    second.update(kStep, secondInputs);
+  }
+  report.check(deterministic, "two brains fed the same match play it the same way");
+}
+
 }  // namespace
 
 bool runSelfTest() {
@@ -525,6 +600,7 @@ bool runSelfTest() {
   testRoundReset(report);
   testMatchFlow(report);
   testRandomPlay(report);
+  testAiOpponent(report);
   testSpriteArt(report);
 
   std::cout << "\n" << report.passed << " checks passed, " << report.failed << " failed\n";
