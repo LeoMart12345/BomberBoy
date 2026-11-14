@@ -19,7 +19,6 @@ bb::PlayerInput readPlayerOne() {
   input.down = sf::Keyboard::isKeyPressed(sf::Keyboard::S);
   input.left = sf::Keyboard::isKeyPressed(sf::Keyboard::A);
   input.right = sf::Keyboard::isKeyPressed(sf::Keyboard::D);
-  input.dropBomb = sf::Keyboard::isKeyPressed(sf::Keyboard::Space);
   return input;
 }
 
@@ -29,9 +28,19 @@ bb::PlayerInput readPlayerTwo() {
   input.down = sf::Keyboard::isKeyPressed(sf::Keyboard::Down);
   input.left = sf::Keyboard::isKeyPressed(sf::Keyboard::Left);
   input.right = sf::Keyboard::isKeyPressed(sf::Keyboard::Right);
-  input.dropBomb = sf::Keyboard::isKeyPressed(sf::Keyboard::Enter) ||
-                   sf::Keyboard::isKeyPressed(sf::Keyboard::RControl);
   return input;
+}
+
+/// Returns the player index a key press drops a bomb for, or -1 for other keys.
+int bombKeyPlayer(sf::Keyboard::Key key) {
+  if (key == sf::Keyboard::Space) {
+    return 0;
+  }
+  if (key == sf::Keyboard::Enter || key == sf::Keyboard::RControl ||
+      key == sf::Keyboard::RShift) {
+    return 1;
+  }
+  return -1;
 }
 
 void printUsage() {
@@ -49,23 +58,21 @@ void printUsage() {
             << "  P  pause    Esc  quit\n";
 }
 
-/// Fixed input script used by --screenshot so the captured frame shows the action.
+/// Fixed input script used by --screenshot so the captured frame shows the action:
+/// both bombers drop their opening bomb and step into the escape lane.
 void playDemo(bb::Game& game, float seconds) {
   const float step = 1.0f / 60.0f;
   int frame = 0;
   for (float elapsed = 0.0f; elapsed < seconds; elapsed += step, ++frame) {
     std::array<bb::PlayerInput, bb::kPlayerCount> inputs{};
 
-    // Player 1 drops a bomb on the spawn tile and walks clear of the blast.
     bb::PlayerInput playerOne;
     playerOne.dropBomb = frame >= 8 && frame < 12;
-    playerOne.down = frame >= 16 && frame < 130;
+    playerOne.right = frame >= 20 && frame < 62;
 
-    // Player 2 drops a slower bomb and keeps wandering along the bottom corridor.
     bb::PlayerInput playerTwo;
     playerTwo.dropBomb = frame >= 40 && frame < 44;
-    playerTwo.left = frame >= 50 && frame < 110;
-    playerTwo.up = frame >= 110;
+    playerTwo.left = frame >= 54 && frame < 96;
 
     inputs[0] = playerOne;
     inputs[1] = playerTwo;
@@ -150,6 +157,9 @@ int main(int argc, char** argv) {
 
   sf::Clock frameClock;
   bool paused = false;
+  // Bomb drops are edge triggered from key events: a tap can never be missed by
+  // the polling that drives movement, and a held key still only drops one bomb.
+  std::array<bool, bb::kPlayerCount> bombPressed{};
 
   while (window.isOpen()) {
     sf::Event event;
@@ -166,18 +176,28 @@ int main(int argc, char** argv) {
             game.resetRound();
           }
           paused = false;
+          bombPressed = {};
         } else if (event.key.code == sf::Keyboard::P) {
           paused = !paused;
+          bombPressed = {};
+        } else {
+          const int who = bombKeyPlayer(event.key.code);
+          if (who >= 0) {
+            bombPressed[static_cast<std::size_t>(who)] = true;
+          }
         }
       }
     }
 
     const float dt = std::min(frameClock.restart().asSeconds(), 0.05f);
     if (!paused) {
-      const std::array<bb::PlayerInput, bb::kPlayerCount> inputs{readPlayerOne(),
-                                                                readPlayerTwo()};
+      std::array<bb::PlayerInput, bb::kPlayerCount> inputs{readPlayerOne(), readPlayerTwo()};
+      for (std::size_t i = 0; i < inputs.size(); ++i) {
+        inputs[i].dropBomb = bombPressed[i];
+      }
       game.update(dt, inputs);
     }
+    bombPressed = {};
 
     renderer.draw(game, paused);
     window.display();
