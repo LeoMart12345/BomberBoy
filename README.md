@@ -1,9 +1,10 @@
 # BomberBoy
 
 A two-player, same-keyboard Bomberman-style arena battle written in C++17 with
-[SFML](https://www.sfml-dev.org/) 2.6. Everything is drawn with SFML primitives at
-runtime, so there are no art assets to install - just the executable and a system
-font for the HUD.
+[SFML](https://www.sfml-dev.org/) 2.6. The arena is drawn with a small pixel-art
+sprite set that ships in `assets/sprites`, and every sprite can be replaced with
+your own PNGs; a shape-drawn fallback keeps the game playable without any art on
+disk.
 
 ![BomberBoy in action](docs/screenshot.png)
 
@@ -11,11 +12,13 @@ font for the HUD.
 
 - Local 2-player duel on a 15 x 13 grid arena that is regenerated every round.
 - Bombs with a 2.4 s fuse, cross-shaped blasts and full chain reactions.
+- Spawns start boxed in by crates, so the opening bomb always blows one open.
 - Classic "walk off your own bomb, then it turns solid" bomb handling.
+- A pulsing ring marks every live bomb, even while its owner stands on it.
 - Three power-ups hidden in the destructible bricks.
 - Best-of rounds (first to 3 by default) with a round-over / match-over overlay.
-- Hand-drawn look: brick textures, animated bomb sparks, flame glow, ghost players
-  with eyes that follow the walking direction.
+- 16 x 16 pixel-art sprites for tiles, bombers, bombs, flames and pickups, drawn
+  at 3x zoom with nearest-neighbour scaling.
 - Headless logic test suite (`--selftest`) and an offscreen screenshot mode.
 
 ## Requirements
@@ -66,7 +69,11 @@ so keyboards without a usable numpad key still work.
 
 - Each round both players spawn in opposite corners with one bomb, a one-tile
   blast and normal speed. The arena is 15 x 13 tiles with indestructible pillars
-  and destructible bricks; the 5 x 5 pocket around each spawn is kept clear.
+  and destructible bricks.
+- A spawn keeps a three-tile pocket clear - the spawn tile plus a two-tile lane
+  that leads toward the middle of the arena - and at least one crate always sits
+  next to the spawn. Drop your opening bomb, step into the lane and the crate is
+  gone; the second lane tile is outside the one-tile blast.
 - A bomb explodes after 2.4 s. The blast runs one tile per blast range in the four
   directions, stops at walls, destroys the first brick it touches and fades after
   0.45 s. A blast that touches another bomb detonates it immediately - chains can
@@ -84,14 +91,46 @@ so keyboards without a usable numpad key still work.
 
 Destroyed bricks have a 28% chance to reveal a pickup. Walk over it to collect it:
 
-| Pickup      | Look        | Effect                                        |
-| ----------- | ----------- | --------------------------------------------- |
-| Extra Bomb  | bomb icon   | +1 simultaneous bomb (1 to 8)                 |
-| Extra Blast | plus icon   | +1 blast range (1 to 9)                       |
-| Speed       | bolt icon   | +0.5 tiles/s movement (3.6 up to 6.6)         |
+| Pickup      | Look          | Effect                                |
+| ----------- | ------------- | ------------------------------------- |
+| Extra Bomb  | bomb icon     | +1 simultaneous bomb (1 to 8)         |
+| Extra Blast | flame icon    | +1 blast range (1 to 9)               |
+| Speed       | bolt icon     | +0.5 tiles/s movement (3.6 up to 6.6) |
 
 A destroyed brick can also stay empty, so not every explosion pays out.
 
+## Art assets
+
+All graphics come from `assets/sprites/*.png`. The set ships with the repo, so a
+normal build shows the pixel-art look immediately; the renderer searches
+`assets/sprites`, `../assets/sprites` and `../../assets/sprites`, and
+`BOMBERBOY_ASSETS=/some/dir` overrides the search. If the PNGs are missing the
+game falls back to drawing everything with SFML shapes.
+
+Every sprite is 16 x 16 pixels and is drawn at 48 px (3x) with nearest-neighbour
+filtering, so the art stays crisp:
+
+| File pattern                       | Sprite                                              |
+| ---------------------------------- | --------------------------------------------------- |
+| `floor.png` `wall.png` `brick.png` | arena tiles                                          |
+| `player1_<facing>.png`             | blue bomber, `<facing>` = `down` `up` `left` `right` |
+| `player2_<facing>.png`             | orange bomber                                        |
+| `bomb0..2.png`                     | bomb with a flickering fuse spark                    |
+| `flame_center0..1.png`             | explosion core                                       |
+| `flame_h0..1.png` `flame_v0..1.png`| horizontal / vertical blast arms                    |
+| `powerup_bomb/range/speed.png`     | the three pickups                                    |
+
+To reskin the game, drop 16 x 16 PNGs with the same names into `assets/sprites`.
+To edit the built-in art, change `tools/generate_assets.cpp` and regenerate:
+
+```bash
+make assets                                    # Makefile: builds and reruns the generator
+cmake --build build --target generate_assets   # CMake: builds the tool
+./build/generate_assets assets/sprites         # then run it yourself
+```
+
+The generator only needs SFML - no art program - which keeps the look of the game
+reviewable as code.
 
 ## Command line
 
@@ -122,25 +161,29 @@ The whole game logic lives in `bb::Game`, which does not depend on SFML at all.
 That keeps the rules testable from a plain console program:
 
 ```bash
-./build/bomberboy --selftest     # 59 checks, exit code 0 on success
+./build/bomberboy --selftest     # 63 checks, exit code 0 on success
 ctest --test-dir build --output-on-failure
 ```
 
 The suite covers fresh-match state, arena generation (borders, pillars, spawn
-pockets), border collision, bomb placement and fuse timing, the ownership rules
-for dropped bombs, chain reactions, round resets, the match flow and a seeded
-random-play stress test that keeps checking for players stuck inside walls or
-bricks.
+lanes and the crate next to each spawn), border collision, bomb placement and fuse
+timing, the opening bomb destroying a crate while the bomber escapes, the
+ownership rules for dropped bombs, chain reactions, round resets, the match flow
+and a seeded random-play stress test that keeps checking for players stuck inside
+walls or bricks.
 
 ## Project layout
 
 ```
 CMakeLists.txt          CMake build (also registers the CTest self-test)
-Makefile                plain g++ build: make, make run, make test
+Makefile                plain g++ build: make, make run, make test, make assets
 src/game.hpp  game.cpp  arena, players, bombs, flames, power-ups, scoring (SFML-free)
-src/renderer.*          all drawing: tiles, bombs, flames, players, HUD, overlays
+src/renderer.*          sprite and shape drawing: tiles, bombs, flames, players, HUD
+src/assets.*            sprite-sheet loading and the assets/sprites search path
 src/selftest.*          the headless checks behind --selftest
 src/main.cpp            window, input mapping, command line handling, demo replay
+tools/generate_assets.cpp  regenerates the pixel-art PNGs in assets/sprites
+assets/sprites/*.png    the 16 x 16 sprite set used by the renderer
 docs/*.png              screenshots used by this README
 ```
 
@@ -149,12 +192,22 @@ docs/*.png              screenshots used by this README
 - **Logic / rendering split.** `Game` owns every rule and only exposes read-only
   getters, so the renderer can never desync the simulation. The same class powers
   the interactive game, the self-test and the screenshot mode.
+- **Input.** Movement polls the keyboard, but bomb drops are edge triggered from
+  `sf::Event::KeyPressed`. A quick tap can therefore never be missed between two
+  frames, and because key repeat is disabled a held key still drops only one bomb.
 - **Movement.** Strictly four-directional. Inputs are advanced in six sub-steps
   per frame and the player is gently snapped towards the centre of the corridor,
   which prevents tunnelling through walls and getting caught on corners.
+- **Sprites.** `SpriteSet` loads the PNGs once at start-up and the renderer only
+  falls back to shapes when a sprite is missing, so the game never depends on the
+  art being installed.
 - **Determinism.** All randomness comes from one `std::mt19937` seeded through the
   `Game` constructor, so `--seed` plus a fixed input script reproduces a round
   exactly. That is how the screenshot mode produces its action frame.
+- **Fonts.** The renderer probes a list of common system fonts (DejaVu, Liberation,
+  Carlito, FreeSans, Open Sans, Cantarell, Adwaita, Arial). Set
+  `BOMBERBOY_FONT=/path/to/font.ttf` to force a specific font, or drop one at
+  `assets/font.ttf`. Without any font the game still runs, it just skips the text.
 - **Fonts.** The renderer probes a list of common system fonts (DejaVu, Liberation,
   Carlito, FreeSans, Open Sans, Cantarell, Adwaita, Arial). Set
   `BOMBERBOY_FONT=/path/to/font.ttf` to force a specific font, or drop one at

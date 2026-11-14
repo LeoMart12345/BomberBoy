@@ -83,9 +83,42 @@ Renderer::Renderer(sf::RenderTarget& target) : m_target(target) {
       m_hasFont = true;
     }
   }
+
+  // Sprite art is optional: without it every draw routine falls back to shapes.
+  m_sprites.load();
 }
 
 float Renderer::fieldTop() { return static_cast<float>(kHudHeight); }
+
+int Renderer::facingIndex(Direction facing) {
+  switch (facing) {
+    case Direction::Down:
+      return 0;
+    case Direction::Up:
+      return 1;
+    case Direction::Left:
+      return 2;
+    case Direction::Right:
+    default:
+      return 3;
+  }
+}
+
+void Renderer::drawSprite(const sf::Texture& texture, const sf::Vector2f& center, float size,
+                          sf::Uint8 alpha, float rotation) {
+  const sf::Vector2u texSize = texture.getSize();
+  if (texSize.x == 0 || texSize.y == 0) {
+    return;
+  }
+  sf::Sprite sprite(texture);
+  sprite.setOrigin(static_cast<float>(texSize.x) * 0.5f, static_cast<float>(texSize.y) * 0.5f);
+  const float scale = size / static_cast<float>(texSize.x);
+  sprite.setScale(scale, size / static_cast<float>(texSize.y));
+  sprite.setPosition(center);
+  sprite.setRotation(rotation);
+  sprite.setColor(sf::Color(255, 255, 255, alpha));
+  m_target.draw(sprite);
+}
 
 sf::Vector2f Renderer::tileCenter(TileCoord tile) const {
   return sf::Vector2f{static_cast<float>(tile.x) * kTileSize + kTileSize * 0.5f,
@@ -140,12 +173,22 @@ void Renderer::draw(const Game& game, bool paused) {
   drawBombs(game);
   drawFlames(game);
   drawPlayers(game);
+  drawBombMarkers(game);
   drawHud(game);
   drawFooter();
   drawOverlays(game, paused);
 }
 
 void Renderer::drawFloor() {
+  if (m_sprites.ready()) {
+    for (int y = 0; y < kRows; ++y) {
+      for (int x = 0; x < kCols; ++x) {
+        drawSprite(m_sprites.floor, tileCenter(TileCoord{x, y}), kTileSize);
+      }
+    }
+    return;
+  }
+
   sf::RectangleShape tile(sf::Vector2f(kTileSize, kTileSize));
   sf::RectangleShape line(sf::Vector2f(kTileSize, 1.f));
 
@@ -167,6 +210,20 @@ void Renderer::drawFloor() {
 }
 
 void Renderer::drawTiles(const Game& game) {
+  if (m_sprites.ready()) {
+    for (int y = 0; y < kRows; ++y) {
+      for (int x = 0; x < kCols; ++x) {
+        const Tile tileType = game.tileAt(x, y);
+        if (tileType == Tile::Floor) {
+          continue;
+        }
+        const sf::Texture& texture = tileType == Tile::Wall ? m_sprites.wall : m_sprites.brick;
+        drawSprite(texture, tileCenter(TileCoord{x, y}), kTileSize);
+      }
+    }
+    return;
+  }
+
   constexpr float kInset = 1.f;
   constexpr float kBlockSize = kTileSize - 2.f * kInset;
 
@@ -227,6 +284,26 @@ void Renderer::drawTiles(const Game& game) {
 }
 
 void Renderer::drawPowerUps(const Game& game) {
+  if (m_sprites.ready()) {
+    for (const PowerUp& powerUp : game.powerUps()) {
+      const sf::Vector2f center = tileCenter(powerUp.tile);
+      const float phase = static_cast<float>(powerUp.tile.x * 3 + powerUp.tile.y * 5);
+      const float bob = std::sin(m_time * 5.f + phase) * 2.f;
+      const float size = kTileSize * 0.78f;
+
+      sf::CircleShape shadow(size * 0.42f, 20);
+      shadow.setOrigin(size * 0.42f, size * 0.42f);
+      shadow.setScale(1.f, 0.32f);
+      shadow.setPosition(center.x, center.y + size * 0.44f);
+      shadow.setFillColor(sf::Color(0, 0, 0, 110));
+      m_target.draw(shadow);
+
+      const auto icon = static_cast<std::size_t>(powerUp.kind);
+      drawSprite(m_sprites.powerUp[icon], sf::Vector2f(center.x, center.y + bob), size);
+    }
+    return;
+  }
+
   for (const PowerUp& powerUp : game.powerUps()) {
     const sf::Vector2f center = tileCenter(powerUp.tile);
     const float phase = static_cast<float>(powerUp.tile.x * 3 + powerUp.tile.y * 5);
@@ -316,6 +393,36 @@ void Renderer::drawPowerUps(const Game& game) {
 
 
 void Renderer::drawBombs(const Game& game) {
+  if (m_sprites.ready()) {
+    for (const Bomb& bomb : game.bombs()) {
+      const sf::Vector2f center = tileCenter(bomb.tile);
+      const float urgency = 1.f - clamp01(bomb.fuse / Game::kBombFuse);
+      const float pulse = 1.f + 0.05f * std::sin(m_time * (7.f + urgency * 26.f) + bomb.tile.x);
+
+      // Warm halo so a bomb stays readable even while the bomber stands on it.
+      sf::CircleShape halo(kTileSize * 0.5f, 28);
+      halo.setOrigin(kTileSize * 0.5f, kTileSize * 0.5f);
+      halo.setPosition(center);
+      halo.setFillColor(
+          sf::Color(255, 132, 40, static_cast<sf::Uint8>(26 + 70 * urgency)));
+      m_target.draw(halo);
+
+      sf::CircleShape shadow(kTileSize * 0.32f, 22);
+      shadow.setOrigin(kTileSize * 0.32f, kTileSize * 0.32f);
+      shadow.setScale(1.f, 0.33f);
+      shadow.setPosition(center.x, center.y + kTileSize * 0.34f);
+      shadow.setFillColor(sf::Color(0, 0, 0, 120));
+      m_target.draw(shadow);
+
+      const float rate = 6.f + urgency * 14.f;
+      const int frame = static_cast<int>(m_time * rate + static_cast<float>(bomb.tile.x + bomb.tile.y)) %
+                        SpriteSet::kBombFrames;
+      drawSprite(m_sprites.bomb[static_cast<std::size_t>(frame)], center,
+                 kTileSize * 0.95f * pulse);
+    }
+    return;
+  }
+
   for (const Bomb& bomb : game.bombs()) {
     const sf::Vector2f center = tileCenter(bomb.tile);
     const float urgency = 1.f - clamp01(bomb.fuse / Game::kBombFuse);
@@ -364,6 +471,31 @@ void Renderer::drawBombs(const Game& game) {
 }
 
 void Renderer::drawFlames(const Game& game) {
+  if (m_sprites.ready()) {
+    sf::CircleShape halo(1.f, 24);
+    for (const Flame& flame : game.flames()) {
+      const float ratio = clamp01(flame.lifetime > 0.f ? flame.remaining / flame.lifetime : 0.f);
+      const sf::Vector2f center = tileCenter(flame.tile);
+
+      halo.setRadius(kTileSize * 0.55f);
+      halo.setOrigin(kTileSize * 0.55f, kTileSize * 0.55f);
+      halo.setPosition(center);
+      halo.setFillColor(sf::Color(255, 132, 40, alphaOf(ratio, 70)));
+      m_target.draw(halo);
+
+      const int frame =
+          static_cast<int>(m_time * 14.f + static_cast<float>(flame.tile.x * 3 + flame.tile.y * 5)) %
+          SpriteSet::kFlameFrames;
+      const sf::Texture& texture =
+          flame.center ? m_sprites.flameCenter[static_cast<std::size_t>(frame)]
+                       : (flame.horizontal
+                              ? m_sprites.flameHorizontal[static_cast<std::size_t>(frame)]
+                              : m_sprites.flameVertical[static_cast<std::size_t>(frame)]);
+      drawSprite(texture, center, kTileSize, alphaOf(ratio, 255));
+    }
+    return;
+  }
+
   sf::ConvexShape glow;
   glow.setPointCount(4);
   glow.setPoint(0, sf::Vector2f(0.f, -1.f));
@@ -406,6 +538,28 @@ void Renderer::drawFlames(const Game& game) {
 }
 
 
+void Renderer::drawBombMarkers(const Game& game) {
+  if (!m_sprites.ready()) {
+    return;
+  }
+  // A pulsing ring is drawn on top of the players so a bomb is always obvious,
+  // even when the bomber is standing right on top of it.
+  for (const Bomb& bomb : game.bombs()) {
+    const float urgency = 1.f - clamp01(bomb.fuse / Game::kBombFuse);
+    const float pulse = std::sin(m_time * (3.f + urgency * 10.f) + bomb.tile.x * 0.8f);
+    const float radius = kTileSize * (0.455f + 0.035f * pulse);
+    const sf::Uint8 alpha = static_cast<sf::Uint8>(70.f + 140.f * urgency);
+
+    sf::CircleShape ring(radius, 36);
+    ring.setOrigin(radius, radius);
+    ring.setPosition(tileCenter(bomb.tile));
+    ring.setFillColor(sf::Color::Transparent);
+    ring.setOutlineThickness(2.5f);
+    ring.setOutlineColor(sf::Color(255, 190, 96, alpha));
+    m_target.draw(ring);
+  }
+}
+
 void Renderer::drawPlayers(const Game& game) {
   const auto& players = game.players();
   for (std::size_t i = 0; i < players.size(); ++i) {
@@ -422,6 +576,22 @@ void Renderer::drawPlayer(const Player& player, int index) {
   const float bob = std::sin(m_time * 9.f + static_cast<float>(index) * 1.7f) * 1.5f;
   const float cx = player.pos.x * kTileSize;
   const float cy = fieldTop() + player.pos.y * kTileSize + bob;
+
+  if (m_sprites.ready()) {
+    sf::CircleShape shadow(radius, 24);
+    shadow.setOrigin(radius, radius);
+    shadow.setScale(1.f, 0.36f);
+    shadow.setPosition(cx, fieldTop() + player.pos.y * kTileSize + kTileSize * 0.30f);
+    shadow.setFillColor(sf::Color(0, 0, 0, 110));
+    m_target.draw(shadow);
+
+    const int facing = facingIndex(player.facing);
+    const auto playerIndex = static_cast<std::size_t>(index);
+    drawSprite(m_sprites.player[playerIndex][static_cast<std::size_t>(facing)],
+               sf::Vector2f(cx, cy), kTileSize);
+    return;
+  }
+
   const sf::Color color = playerColor(index);
   const sf::Color dark = playerDark(index);
 

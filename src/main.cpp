@@ -154,6 +154,10 @@ int main(int argc, char** argv) {
   if (!renderer.hasFont()) {
     std::cerr << "warning: no system font found, HUD text will be hidden\n";
   }
+  if (!renderer.hasSprites()) {
+    std::cerr << "warning: sprite art not found (looked for assets/sprites), using shape "
+                 "fallback\n";
+  }
 
   sf::Clock frameClock;
   bool paused = false;
