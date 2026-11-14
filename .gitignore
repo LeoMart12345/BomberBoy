@@ -1,0 +1,5 @@
+build/
+*.o
+*.out
+bomberboy
+/cmake-build-*/
