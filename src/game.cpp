@@ -41,6 +41,21 @@ TileCoord Game::spawnTile(int playerIndex) {
   return TileCoord{1, 1};
 }
 
+std::array<TileCoord, 2> Game::escapeLane(int playerIndex) {
+  const TileCoord spawn = spawnTile(playerIndex);
+  const int midX = kCols / 2;
+  const int midY = kRows / 2;
+  int stepX = 0;
+  int stepY = 0;
+  if (spawn.x != midX) {
+    stepX = spawn.x < midX ? 1 : -1;
+  } else {
+    stepY = spawn.y < midY ? 1 : -1;
+  }
+  return {TileCoord{spawn.x + stepX, spawn.y + stepY},
+          TileCoord{spawn.x + 2 * stepX, spawn.y + 2 * stepY}};
+}
+
 void Game::resetMatch() {
   m_scores = {0, 0};
   m_matchOver = false;
@@ -91,10 +106,16 @@ void Game::generateMap() {
       if (m_tiles[y * kCols + x] != Tile::Floor) {
         continue;
       }
+      // Each spawn keeps a three tile pocket open: the spawn tile itself plus the
+      // two tile lane that leads towards the middle of the arena. Everything else
+      // around a spawn can hold crates, so the opening bomb blows a crate apart
+      // instead of fizzling in an empty plaza.
       bool safe = false;
       for (int i = 0; i < kPlayerCount; ++i) {
         const TileCoord spawn = spawnTile(i);
-        if (std::abs(x - spawn.x) <= 2 && std::abs(y - spawn.y) <= 2) {
+        const auto lane = escapeLane(i);
+        if ((x == spawn.x && y == spawn.y) || (x == lane[0].x && y == lane[0].y) ||
+            (x == lane[1].x && y == lane[1].y)) {
           safe = true;
           break;
         }
@@ -105,6 +126,28 @@ void Game::generateMap() {
       constexpr float kBrickChance = 0.72f;
       if (randomChance(m_rng, kBrickChance)) {
         m_tiles[y * kCols + x] = Tile::Brick;
+      }
+    }
+  }
+
+  // Put at least one crate right next to every spawn so the first bomb always has
+  // something to break.
+  static constexpr int kNeighbours[4][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
+  for (int i = 0; i < kPlayerCount; ++i) {
+    const TileCoord spawn = spawnTile(i);
+    const auto lane = escapeLane(i);
+    for (const auto& dir : kNeighbours) {
+      const TileCoord tile{spawn.x + dir[0], spawn.y + dir[1]};
+      if (!inBounds(tile.x, tile.y)) {
+        continue;
+      }
+      if ((tile.x == lane[0].x && tile.y == lane[0].y) ||
+          (tile.x == lane[1].x && tile.y == lane[1].y)) {
+        continue;
+      }
+      if (m_tiles[static_cast<std::size_t>(tile.y * kCols + tile.x)] == Tile::Floor &&
+          !(tile.x % 2 == 0 && tile.y % 2 == 0)) {
+        m_tiles[static_cast<std::size_t>(tile.y * kCols + tile.x)] = Tile::Brick;
       }
     }
   }

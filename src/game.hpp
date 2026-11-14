@@ -117,6 +117,10 @@ class Game {
   int roundsToWin() const { return m_rules.roundsToWin; }
 
   static TileCoord spawnTile(int playerIndex);
+  /// The two open tiles leading from a spawn toward the middle of the arena. The
+  /// first tile is where a player steps after dropping the opening bomb, the
+  /// second is clear of that bomb's one tile blast.
+  static std::array<TileCoord, 2> escapeLane(int playerIndex);
 
  private:
   void generateMap();

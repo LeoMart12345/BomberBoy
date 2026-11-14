@@ -139,28 +139,34 @@ void testArenaLayout(TestReport& report) {
   report.check(borderIsSolid, "the arena is enclosed by walls");
 
   bool spawnsAreClear = true;
+  bool spawnsAreBoxedIn = true;
   for (int player = 0; player < kPlayerCount; ++player) {
     const TileCoord spawn = Game::spawnTile(player);
-    const int step = player == 0 ? 1 : -1;
+    const auto lane = Game::escapeLane(player);
 
     if (game.tileAt(spawn.x, spawn.y) != Tile::Floor) {
       spawnsAreClear = false;
     }
-    // The two tiles leading towards the middle of the arena must be walkable.
-    if (game.tileAt(spawn.x + step, spawn.y) != Tile::Floor ||
-        game.tileAt(spawn.x, spawn.y + step) != Tile::Floor) {
+    // The escape lane towards the middle of the arena must be walkable so a
+    // player can step out of their own bomb's blast.
+    if (game.tileAt(lane[0].x, lane[0].y) != Tile::Floor ||
+        game.tileAt(lane[1].x, lane[1].y) != Tile::Floor) {
       spawnsAreClear = false;
     }
-    // Bricks are never generated in the 5x5 pocket around a spawn.
-    for (int dy = -2; dy <= 2; ++dy) {
-      for (int dx = -2; dx <= 2; ++dx) {
-        if (game.tileAt(spawn.x + dx, spawn.y + dy) == Tile::Brick) {
-          spawnsAreClear = false;
-        }
+
+    int neighbouringCrates = 0;
+    const int steps[4][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
+    for (const auto& step : steps) {
+      if (game.tileAt(spawn.x + step[0], spawn.y + step[1]) == Tile::Brick) {
+        ++neighbouringCrates;
       }
     }
+    if (neighbouringCrates < 1) {
+      spawnsAreBoxedIn = false;
+    }
   }
-  report.check(spawnsAreClear, "spawn corners have clear escape routes and no nearby bricks");
+  report.check(spawnsAreClear, "spawn tiles have a clear two tile escape lane");
+  report.check(spawnsAreBoxedIn, "every spawn starts next to a breakable crate");
 
   report.check(countBricks(game) > 20, "the arena is filled with destructible bricks");
 
@@ -226,6 +232,64 @@ void testBombPlacement(TestReport& report) {
   report.check(game.state() == RoundState::RoundOver, "the round ends when a player dies");
   report.check(game.roundWinner() == 1, "the surviving player wins the round");
   report.check(game.scores()[1] == 1 && game.scores()[0] == 0, "the win is added to the score");
+}
+
+void testOpeningBomb(TestReport& report) {
+  std::cout << "opening bomb breaks crates\n";
+  bool everySpawnHasATarget = true;
+  bool escapeLaneIsSafe = true;
+  bool cratesWentAway = true;
+
+  for (std::uint32_t seed = 1; seed <= 8; ++seed) {
+    for (int player = 0; player < kPlayerCount; ++player) {
+      Game game(seed);
+      const TileCoord spawn = Game::spawnTile(player);
+      const auto lane = Game::escapeLane(player);
+
+      // The bomb must have something to break right next to the spawn.
+      int cratesBefore = 0;
+      const int steps[4][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
+      for (const auto& step : steps) {
+        if (game.tileAt(spawn.x + step[0], spawn.y + step[1]) == Tile::Brick) {
+          ++cratesBefore;
+        }
+      }
+      if (cratesBefore < 1) {
+        everySpawnHasATarget = false;
+      }
+
+      pressOnce(game, player);
+
+      // Run down the escape lane, away from the bomb.
+      PlayerInput run;
+      run.right = lane[0].x > spawn.x;
+      run.left = lane[0].x < spawn.x;
+      run.down = lane[0].y > spawn.y;
+      run.up = lane[0].y < spawn.y;
+      auto inputs = idleInputs();
+      inputs[static_cast<std::size_t>(player)] = run;
+      step(game, 45, inputs);
+      step(game, 3 * kFramesPerSecond, idleInputs());
+
+      if (!game.players()[static_cast<std::size_t>(player)].alive) {
+        escapeLaneIsSafe = false;
+      }
+
+      int cratesAfter = 0;
+      for (const auto& step : steps) {
+        if (game.tileAt(spawn.x + step[0], spawn.y + step[1]) == Tile::Brick) {
+          ++cratesAfter;
+        }
+      }
+      if (cratesAfter >= cratesBefore) {
+        cratesWentAway = false;
+      }
+    }
+  }
+
+  report.check(everySpawnHasATarget, "the opening bomb always has a crate in range");
+  report.check(escapeLaneIsSafe, "stepping into the escape lane survives the opening bomb");
+  report.check(cratesWentAway, "the opening bomb destroys a crate next to the spawn");
 }
 
 void testOwnBombIsSolid(TestReport& report) {
@@ -431,6 +495,7 @@ bool runSelfTest() {
   testArenaLayout(report);
   testWallCollision(report);
   testBombPlacement(report);
+  testOpeningBomb(report);
   testOwnBombIsSolid(report);
   testChainReaction(report);
   testRoundReset(report);
