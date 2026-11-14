@@ -8,6 +8,7 @@
 #include <random>
 #include <string>
 
+#include "assets.hpp"
 #include "game.hpp"
 
 namespace bb {
@@ -485,6 +486,29 @@ void testRandomPlay(TestReport& report) {
   report.check(sawPowerUp, "power-ups appear when bricks are destroyed");
 }
 
+void testSpriteArt(TestReport& report) {
+  std::cout << "sprite art on disk\n";
+
+  const std::string directory = SpriteSet::locateDirectory();
+  if (directory.empty()) {
+    std::cout << "  [SKIP] sprite art is not installed, the renderer uses its shape "
+                 "fallback\n";
+    return;
+  }
+
+  const SpriteAudit audit = SpriteSet::audit(directory);
+  report.check(audit.missing.empty(),
+               std::to_string(audit.expected) + " sprites are present in " + directory);
+  report.check(audit.malformed.empty(), "every sprite in " + directory + " is a square PNG");
+
+  for (const std::string& name : audit.missing) {
+    std::cout << "         missing " << name << '\n';
+  }
+  for (const std::string& problem : audit.malformed) {
+    std::cout << "         " << problem << '\n';
+  }
+}
+
 }  // namespace
 
 bool runSelfTest() {
@@ -501,6 +525,7 @@ bool runSelfTest() {
   testRoundReset(report);
   testMatchFlow(report);
   testRandomPlay(report);
+  testSpriteArt(report);
 
   std::cout << "\n" << report.passed << " checks passed, " << report.failed << " failed\n";
   return report.failed == 0;

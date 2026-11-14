@@ -161,7 +161,7 @@ The whole game logic lives in `bb::Game`, which does not depend on SFML at all.
 That keeps the rules testable from a plain console program:
 
 ```bash
-./build/bomberboy --selftest     # 63 checks, exit code 0 on success
+./build/bomberboy --selftest     # 65 checks with the shipped art, exit code 0
 ctest --test-dir build --output-on-failure
 ```
 
@@ -171,6 +171,13 @@ timing, the opening bomb destroying a crate while the bomber escapes, the
 ownership rules for dropped bombs, chain reactions, round resets, the match flow
 and a seeded random-play stress test that keeps checking for players stuck inside
 walls or bricks.
+
+Two more checks read the PNG headers in `assets/sprites`: every sprite the
+renderer asks for must be there and must be a square image. That catches renamed
+or half-copied art right after a reskin. They are skipped (and the run reports
+63 checks) when the art is not installed, because the shape fallback is then the
+expected look. No OpenGL context is needed - only the first 24 bytes of each file
+are read.
 
 ## Project layout
 
