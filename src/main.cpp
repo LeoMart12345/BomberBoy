@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -9,6 +8,7 @@
 #include <SFML/Graphics.hpp>
 
 #include "ai.hpp"
+#include "cli.hpp"
 #include "game.hpp"
 #include "renderer.hpp"
 #include "selftest.hpp"
@@ -45,25 +45,18 @@ int bombKeyPlayer(sf::Keyboard::Key key) {
   return -1;
 }
 
-void printUsage() {
-  std::cout << "BomberBoy - two player bomb battle\n\n"
-            << "Usage: bomberboy [options]\n"
-            << "  --selftest     run the headless logic checks and exit\n"
-            << "  --seed <n>     build the arena from a fixed seed\n"
-            << "  --cpu          let the computer play player two\n"
-            << "  --fps <n>      frame cap, 0 runs uncapped (default 60)\n"
-            << "  --scale <n>    start with an n times bigger window (1-4)\n"
-            << "  --fullscreen   start in fullscreen\n"
-            << "  --screenshot <file>  render one frame to a PNG instead of opening a window\n"
-            << "  --autoplay <s>       scripted play seconds before the screenshot\n"
-            << "  -h, --help     show this help\n\n"
-            << "Controls\n"
-            << "  Player 1   W A S D to move, Space to drop a bomb\n"
-            << "  Player 2   Arrow keys to move, Enter or Right Ctrl to drop a bomb\n"
-            << "  C  hand player two to the computer (or take it back)\n"
-            << "  R  restart round (or rematch once the match is over)\n"
-            << "  P  pause    F1  help    F2  screenshot    F3  FPS counter\n"
-            << "  F11 fullscreen    Esc  quit\n";
+/// Largest `--scale` that still fits on the desktop, so a big scale never opens a
+/// window that is wider than the screen. The renderer letterboxes whatever is
+/// left over, so falling back here only costs a little sharpness.
+int scaleForDesktop(int requested, const sf::VideoMode& desktop) {
+  for (int scale = requested; scale > 1; --scale) {
+    const unsigned width = bb::Renderer::kWindowWidth * static_cast<unsigned>(scale);
+    const unsigned height = bb::Renderer::kWindowHeight * static_cast<unsigned>(scale);
+    if (width <= desktop.width && height <= desktop.height) {
+      return scale;
+    }
+  }
+  return 1;
 }
 
 /// Fixed input script used by --screenshot so the captured frame shows the action:
@@ -163,64 +156,57 @@ std::string makeWindowTitle(const bb::Game& game, bool cpuOpponent) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  bool runTests = false;
-  bool hasSeed = false;
-  bool cpuOpponent = false;
-  bool fullscreen = false;
-  std::uint32_t seed = 0;
-  std::string screenshotPath;
-  float autoplay = 0.0f;
-  int scale = 1;
-  int fpsLimit = 60;
-
-  for (int i = 1; i < argc; ++i) {
-    const std::string argument = argv[i];
-    if (argument == "--selftest" || argument == "--test") {
-      runTests = true;
-    } else if (argument == "--cpu") {
-      cpuOpponent = true;
-    } else if (argument == "--fullscreen") {
-      fullscreen = true;
-    } else if (argument == "--seed" && i + 1 < argc) {
-      seed = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10));
-      hasSeed = true;
-    } else if (argument == "--fps" && i + 1 < argc) {
-      fpsLimit = std::min(std::max(std::atoi(argv[++i]), 0), 1000);
-    } else if (argument == "--scale" && i + 1 < argc) {
-      scale = std::min(std::max(std::atoi(argv[++i]), 1), 4);
-    } else if (argument == "--screenshot" && i + 1 < argc) {
-      screenshotPath = argv[++i];
-    } else if (argument == "--autoplay" && i + 1 < argc) {
-      autoplay = std::min(std::max(std::strtof(argv[++i], nullptr), 0.0f), 600.0f);
-    } else if (argument == "--help" || argument == "-h") {
-      printUsage();
-      return 0;
-    } else {
-      std::cerr << "Unknown option: " << argument << "\n\n";
-      printUsage();
-      return 1;
-    }
+  const bb::ParsedOptions parsed = bb::parseOptions(argc, argv);
+  if (!parsed.ok) {
+    std::cerr << "bomberboy: " << parsed.error << "\n\n" << bb::usageText();
+    return 1;
+  }
+  if (parsed.wantsHelp) {
+    std::cout << bb::usageText();
+    return 0;
   }
 
-  if (runTests) {
+  const bb::Options& options = parsed.options;
+  if (options.runSelfTest) {
     return bb::runSelfTest() ? 0 : 1;
   }
+  if (!options.screenshotPath.empty()) {
+    return saveScreenshot(options.screenshotPath, options.hasSeed, options.seed,
+                          options.autoplaySeconds)
+               ? 0
+               : 1;
+  }
 
-  if (!screenshotPath.empty()) {
-    return saveScreenshot(screenshotPath, hasSeed, seed, autoplay) ? 0 : 1;
+  const sf::VideoMode desktop = sf::VideoMode::getDesktopMode();
+  const int scale = scaleForDesktop(options.scale, desktop);
+  // Fullscreen ignores the windowed size, but the scale still decides how big the
+  // window is once F11 brings it back, so only mention the clamp for windowed runs.
+  if (!options.fullscreen && scale != options.scale) {
+    std::cout << "note: the desktop fits " << scale << "x, not " << options.scale
+              << "x - the window was scaled down and the canvas is letterboxed\n";
   }
 
   const sf::VideoMode windowedMode(bb::Renderer::kWindowWidth * static_cast<unsigned>(scale),
                                    bb::Renderer::kWindowHeight * static_cast<unsigned>(scale));
 
   sf::RenderWindow window;
-  window.create(fullscreen ? sf::VideoMode::getDesktopMode() : windowedMode, "BomberBoy",
-                fullscreen ? sf::Style::Fullscreen : sf::Style::Default);
-  window.setFramerateLimit(static_cast<unsigned>(fpsLimit));
+  window.create(options.fullscreen ? desktop : windowedMode, "BomberBoy",
+                options.fullscreen ? sf::Style::Fullscreen : sf::Style::Default);
+
+  // Start in the middle of the desktop instead of wherever the window manager
+  // feels like - a scaled-up window can otherwise open with its HUD off-screen.
+  const sf::Vector2i centred(
+      std::max(0, (static_cast<int>(desktop.width) - static_cast<int>(windowedMode.width)) / 2),
+      std::max(0, (static_cast<int>(desktop.height) - static_cast<int>(windowedMode.height)) / 2));
+
+  if (!options.fullscreen) {
+    window.setPosition(centred);
+  }
+  window.setFramerateLimit(static_cast<unsigned>(options.frameCap));
   window.setKeyRepeatEnabled(false);
   window.setView(bb::Renderer::viewFor(window.getSize()));
 
-  bb::Game game = hasSeed ? bb::Game(seed) : bb::Game();
+  bb::Game game = options.hasSeed ? bb::Game(options.seed) : bb::Game();
   bb::AiBrain brain(1);
   bb::Renderer renderer(window);
   if (!renderer.hasFont()) {
@@ -236,13 +222,18 @@ int main(int argc, char** argv) {
   const auto applyWindowMode = [&](bool wantFullscreen) {
     const sf::VideoMode mode = wantFullscreen ? sf::VideoMode::getDesktopMode() : windowedMode;
     window.create(mode, "BomberBoy", wantFullscreen ? sf::Style::Fullscreen : sf::Style::Default);
-    window.setFramerateLimit(static_cast<unsigned>(fpsLimit));
+    window.setFramerateLimit(static_cast<unsigned>(options.frameCap));
     window.setKeyRepeatEnabled(false);
     window.setView(bb::Renderer::viewFor(window.getSize()));
+    if (!wantFullscreen) {
+      window.setPosition(centred);
+    }
     renderer.reloadAssets();
   };
 
   sf::Clock frameClock;
+  bool cpuOpponent = options.cpuOpponent;
+  bool fullscreen = options.fullscreen;
   bool paused = false;
   bool showHelp = false;
   bool showFps = true;
@@ -270,7 +261,13 @@ int main(int argc, char** argv) {
         bombPressed = {};
       } else if (event.type == sf::Event::KeyPressed) {
         if (event.key.code == sf::Keyboard::Escape) {
-          window.close();
+          // Closing the panel with Esc is what everyone tries first; quitting by
+          // accident while reading the controls would be a nasty surprise.
+          if (showHelp) {
+            showHelp = false;
+          } else {
+            window.close();
+          }
         } else if (event.key.code == sf::Keyboard::R) {
           if (game.matchOver()) {
             game.resetMatch();

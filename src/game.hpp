@@ -139,6 +139,7 @@ class Game {
   void updateBombOccupancy();
   bool bombAt(TileCoord tile, int* bombIndex = nullptr) const;
   TileCoord centerTile(const Vec2& pos) const;
+  Tile& tileRef(int x, int y);
 
   std::mt19937 m_rng;
   MatchRules m_rules;

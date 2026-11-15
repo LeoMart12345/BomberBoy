@@ -940,7 +940,7 @@ void Renderer::drawHelpPanel() {
   };
 
   // Every binding the game listens for, so the help can never fall behind it.
-  static const std::array<Row, 11> controls = {{
+  static const std::array<Row, 12> controls = {{
       {"W A S D", "Player 1 moves"},
       {"SPACE", "Player 1 drops a bomb"},
       {"ARROWS", "Player 2 moves"},
@@ -952,12 +952,13 @@ void Renderer::drawHelpPanel() {
       {"F2", "Save a screenshot of the window"},
       {"F3", "Show or hide the FPS counter"},
       {"F11", "Fullscreen or windowed"},
+      {"ESC", "Close this panel, or quit"},
   }};
 
   const float width = static_cast<float>(kWindowWidth);
   const float fieldHeight = static_cast<float>(kRows) * kTileSize;
   const float panelWidth = 600.f;
-  const float panelHeight = 360.f;
+  const float panelHeight = 384.f;
   const float left = (width - panelWidth) * 0.5f;
   const float top = fieldTop() + (fieldHeight - panelHeight) * 0.5f;
 

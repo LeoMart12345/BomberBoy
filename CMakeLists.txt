@@ -17,6 +17,7 @@ add_executable(bomberboy
   src/ai.cpp
   src/renderer.cpp
   src/assets.cpp
+  src/cli.cpp
   src/selftest.cpp
 )
 

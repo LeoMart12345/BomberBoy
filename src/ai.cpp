@@ -340,6 +340,12 @@ bool nextToCrate(const Game& game, TileCoord tile) {
   });
 }
 
+/// A pickup lying on the floor, ready to be walked over.
+bool powerUpAt(const Game& game, TileCoord tile) {
+  return std::any_of(game.powerUps().begin(), game.powerUps().end(),
+                     [tile](const PowerUp& powerUp) { return powerUp.tile == tile; });
+}
+
 bool opponentInBlast(const Game& game, int self, const Grid& blast) {
   const auto& players = game.players();
   for (int index = 0; index < kPlayerCount; ++index) {
@@ -566,6 +572,13 @@ PlayerInput AiBrain::think(const Game& game, float dt) {
 
   Path path =
       search(game, here, safeBlocked, [&game](TileCoord tile) { return nextToCrate(game, tile); });
+  // Nothing left to blow up within reach: grab a pickup before hunting the other
+  // player. The pickup tile is a goal like any other, so the walk there stays on
+  // tiles no blast can reach.
+  if (!path.found) {
+    path = search(game, here, safeBlocked,
+                  [&game](TileCoord tile) { return powerUpAt(game, tile); });
+  }
   if (!path.found) {
     const auto& players = game.players();
     const auto other = static_cast<std::size_t>(m_playerIndex == 0 ? 1 : 0);

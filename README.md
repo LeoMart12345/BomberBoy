@@ -21,7 +21,8 @@ disk.
   at 3x zoom with nearest-neighbour scaling.
 - Headless logic test suite (`--selftest`) and an offscreen screenshot mode.
 - A computer opponent for player two (`--cpu`, or press `C` mid-round): it clears
-  crates, never walks into a fuse it cannot outrun and never blows itself up.
+  crates, grabs the power-ups it can reach, never walks into a fuse it cannot
+  outrun and never blows itself up.
 - HUD with each player's current loadout (bombs, blast range, speed), the round
   pips, a `COMPUTER` tag when the AI plays and a smoothed FPS / frame-time readout
   in the footer.
@@ -73,9 +74,10 @@ make run
 Global keys: `F1` opens the controls panel (the round is frozen while it is open),
 `F2` saves a screenshot, `F3` shows or hides the FPS counter, `F11` toggles
 fullscreen, `C` hands player two to the computer and back, `R` restarts the round
-(or starts a rematch once the match is over), `P` pauses, `Esc` quits. Player 2
-drops a bomb on either `Enter` or right `Ctrl`, so keyboards without a usable
-numpad key still work. The round also pauses itself when the window loses focus.
+(or starts a rematch once the match is over), `P` pauses, and `Esc` closes the
+controls panel - pressing it again, with no panel open, quits. Player 2 drops a
+bomb on either `Enter` or right `Ctrl`, so keyboards without a usable numpad key
+still work. The round also pauses itself when the window loses focus.
 
 ## Rules
 
@@ -148,6 +150,8 @@ reviewable as code.
 ## Command line
 
 ```
+BomberBoy - two player bomb battle
+
 Usage: bomberboy [options]
   --selftest           run the headless logic checks and exit
   --seed <n>           build the arena from a fixed seed
@@ -158,7 +162,22 @@ Usage: bomberboy [options]
   --screenshot <file>  render one frame to a PNG instead of opening a window
   --autoplay <s>       scripted play seconds before the screenshot
   -h, --help           show the help text
+
+Controls
+  Player 1   W A S D to move, Space to drop a bomb
+  Player 2   Arrow keys to move, Enter or Right Ctrl to drop a bomb
+  C  hand player two to the computer (or take it back)
+  R  restart round (or rematch once the match is over)
+  P  pause    F1  help    F2  screenshot    F3  FPS counter
+  F11 fullscreen    Esc  quit (closes the help panel first)
 ```
+
+Every flag is checked: an unknown option, a missing value or a number outside the
+range in this list stops the game with a one-line message and the usage text
+instead of quietly falling back to a default. `--scale` is a request, not a
+promise - it is reduced to the largest factor that still fits on the desktop, and
+the game says so when that happens. The window then opens in the middle of the
+desktop rather than wherever the window manager decides.
 
 Examples:
 
@@ -167,7 +186,8 @@ Examples:
 ./build/bomberboy --seed 7
 ./build/bomberboy --cpu --seed 7
 ./build/bomberboy --fps 0                  # uncapped, the footer shows the result
-./build/bomberboy --scale 2 --fullscreen
+./build/bomberboy --scale 2
+./build/bomberboy --fullscreen
 ./build/bomberboy --seed 7 --autoplay 2.6 --screenshot shot.png
 ```
 
@@ -183,7 +203,7 @@ The whole game logic lives in `bb::Game`, which does not depend on SFML at all.
 That keeps the rules testable from a plain console program:
 
 ```bash
-./build/bomberboy --selftest     # 75 checks with the shipped art, exit code 0
+./build/bomberboy --selftest     # 92 checks with the shipped art, exit code 0
 ctest --test-dir build --output-on-failure
 ```
 
@@ -192,15 +212,23 @@ lanes and the crate next to each spawn), border collision, bomb placement and fu
 timing, the opening bomb destroying a crate while the bomber escapes, the
 ownership rules for dropped bombs, chain reactions, round resets, the match flow
 and a seeded random-play stress test that keeps checking for players stuck inside
-walls or bricks. Three more checks let the computer opponent play on its own and
-assert that it drops bombs, clears crates and never kills itself; a fourth feeds
-two brains the same match and requires identical inputs, so the opponent stays
-deterministic.
+walls or bricks. Five checks pin the `MatchRules` clamping - starting bombs, blast
+range, speed and the rounds needed to win all have a valid window, and a rule set
+built by code has to land inside it. Three more checks let the computer opponent
+play on its own and assert that it drops bombs, clears crates and never kills
+itself; a fourth feeds two brains the same match and requires identical inputs,
+so the opponent stays deterministic.
+
+Twelve checks cover the command line: the defaults, every option in one arbitrary
+order, both spellings of `--help`, the `--test` alias, and the errors for unknown
+flags, missing values and out-of-range numbers. The usage text also has to list
+every flag, which catches a new option that was only half wired up. The parser
+lives in `cli.cpp` rather than in `main()` so all of this runs headless.
 
 Two more checks read the PNG headers in `assets/sprites`: every sprite the
 renderer asks for must be there and must be a square image. That catches renamed
 or half-copied art right after a reskin. They are skipped (and the run reports
-73 checks) when the art is not installed, because the shape fallback is then the
+90 checks) when the art is not installed, because the shape fallback is then the
 expected look. No OpenGL context is needed - only the first 24 bytes of each file
 are read.
 
@@ -216,10 +244,11 @@ CMakeLists.txt          CMake build (also registers the CTest self-test)
 Makefile                plain g++ build: make, make run, make test, make assets
 src/game.hpp  game.cpp  arena, players, bombs, flames, power-ups, scoring (SFML-free)
 src/ai.hpp  ai.cpp      the computer opponent that drives player two
+src/cli.hpp  cli.cpp    strict command line parsing and the --help text
 src/renderer.*          sprite and shape drawing: tiles, bombs, flames, players, HUD
 src/assets.*            sprite-sheet loading and the assets/sprites search path
 src/selftest.*          the headless checks behind --selftest
-src/main.cpp            window, input mapping, command line handling, demo replay
+src/main.cpp            window, input mapping, rendering loop, demo replay
 tools/generate_assets.cpp  regenerates the pixel-art PNGs in assets/sprites
 assets/sprites/*.png    the 16 x 16 sprite set used by the renderer
 docs/*.png              screenshots used by this README
@@ -233,6 +262,14 @@ docs/*.png              screenshots used by this README
 - **Input.** Movement polls the keyboard, but bomb drops are edge triggered from
   `sf::Event::KeyPressed`. A quick tap can therefore never be missed between two
   frames, and because key repeat is disabled a held key still drops only one bomb.
+  The controls panel owns `Esc` while it is open, so closing it never costs a
+  match.
+- **Command line.** Every flag is parsed by `bb::parseOptions()` in `cli.cpp` and
+  described by one table that also prints the `--help` text, so a flag cannot be
+  documented in one place and forgotten in the other. Bad input - an unknown flag,
+  a missing value, a number outside the range - is a hard error with a message
+  instead of a silent default, and keeping the parser out of `main()` is what lets
+  the self-test cover it.
 - **Movement.** Strictly four-directional. Inputs are advanced in six sub-steps
   per frame and the player is gently snapped towards the centre of the corridor,
   which prevents tunnelling through walls and getting caught on corners.
@@ -245,7 +282,9 @@ docs/*.png              screenshots used by this README
   burning tile when it can be off it again before the blast arrives; a drop is
   only made when the whole way out fits that budget with a little slack, and the
   escape it was checked against stays committed instead of being re-planned on
-  the next frame, when the fuse has already ticked down.
+  the next frame, when the fuse has already ticked down. With no crate left in
+  reach it walks to a power-up before it goes hunting for the other player, using
+  the same safe-tile search it uses for everything else.
 - **Sprites.** `SpriteSet` loads the PNGs once at start-up and the renderer only
   falls back to shapes when a sprite is missing, so the game never depends on the
   art being installed.
@@ -253,8 +292,11 @@ docs/*.png              screenshots used by this README
   `Renderer::viewFor()` maps it onto the window: the canvas is centred, the spare
   space becomes bars, and the zoom snaps to a whole number whenever that keeps at
   least 85% of the window, so resized and fullscreen windows keep the art crisp
-  instead of blurring it. Re-creating the window for `F11` drops the OpenGL
-  context, so `reloadAssets()` re-uploads the font and the sprite textures.
+  instead of blurring it. The startup window is centred on the desktop and
+  `--scale` is reduced to the largest whole factor that still fits there, so a big
+  scale can never open a window the desktop cannot show. Re-creating the window for
+  `F11` drops the OpenGL context, so `reloadAssets()` re-uploads the font and the
+  sprite textures.
 - **Frame timing.** The simulation never advances more than 50 ms per frame, so a
   stall cannot push a player through a wall, while the footer readout follows the
   real frame time and is smoothed with an exponential moving average: a stutter

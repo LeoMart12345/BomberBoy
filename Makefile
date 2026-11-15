@@ -5,8 +5,8 @@ PKG_CONFIG ?= pkg-config
 SFML_CFLAGS := $(shell $(PKG_CONFIG) --cflags sfml-graphics sfml-window sfml-system)
 SFML_LIBS := $(shell $(PKG_CONFIG) --libs sfml-graphics sfml-window sfml-system)
 
-SOURCES := src/main.cpp src/game.cpp src/ai.cpp src/renderer.cpp src/assets.cpp src/selftest.cpp
-HEADERS := src/game.hpp src/ai.hpp src/renderer.hpp src/assets.hpp src/selftest.hpp
+SOURCES := src/main.cpp src/game.cpp src/ai.cpp src/renderer.cpp src/assets.cpp src/cli.cpp src/selftest.cpp
+HEADERS := src/game.hpp src/ai.hpp src/renderer.hpp src/assets.hpp src/cli.hpp src/selftest.hpp
 
 bomberboy: $(SOURCES) $(HEADERS)
 	$(CXX) $(CXXFLAGS) $(SFML_CFLAGS) $(SOURCES) -o $@ $(SFML_LIBS)

@@ -7,9 +7,11 @@
 #include <iostream>
 #include <random>
 #include <string>
+#include <vector>
 
 #include "ai.hpp"
 #include "assets.hpp"
+#include "cli.hpp"
 #include "game.hpp"
 #include "renderer.hpp"
 
@@ -35,6 +37,8 @@ struct TestReport {
 };
 
 std::array<PlayerInput, kPlayerCount> idleInputs() { return {}; }
+
+bool nearValue(float a, float b) { return std::fabs(a - b) < 0.01f; }
 
 void step(Game& game, int frames, const std::array<PlayerInput, kPlayerCount>& inputs) {
   for (int frame = 0; frame < frames; ++frame) {
@@ -124,6 +128,35 @@ void testFreshMatch(TestReport& report) {
   report.check(game.roundNumber() == 1, "first round is round one");
   report.check(!game.matchOver() && game.matchWinner() == -1, "match is not over");
   report.check(game.bombs().empty() && game.flames().empty(), "arena starts empty");
+}
+
+/// The constructor clamps the rules it is handed, so a hand-written `MatchRules`
+/// can never produce a loadout the game cannot represent.
+void testMatchRules(TestReport& report) {
+  std::cout << "match rules\n";
+
+  MatchRules extreme;
+  extreme.startingBombs = 99;
+  extreme.startingRange = 0;
+  extreme.startingSpeed = 100.f;
+  extreme.roundsToWin = 0;
+  const Game clamped(4u, extreme);
+  report.check(clamped.players()[0].bombCapacity == 8,
+               "the starting bomb count is capped at eight");
+  report.check(clamped.players()[0].blastRange == 1, "the blast range never drops below one");
+  report.check(nearValue(clamped.players()[0].moveSpeed, Game::kMaxMoveSpeed),
+               "the starting speed is capped at the maximum");
+  report.check(clamped.roundsToWin() == 1, "a match always needs at least one round win");
+
+  MatchRules tuned;
+  tuned.startingBombs = 3;
+  tuned.startingRange = 4;
+  tuned.startingSpeed = 1.5f;
+  tuned.roundsToWin = 5;
+  const Game custom(5u, tuned);
+  report.check(custom.players()[0].bombCapacity == 3 && custom.players()[0].blastRange == 4 &&
+                   nearValue(custom.players()[0].moveSpeed, 1.5f) && custom.roundsToWin() == 5,
+               "rules inside the valid range are used as they are");
 }
 
 void testArenaLayout(TestReport& report) {
@@ -512,8 +545,6 @@ void testSpriteArt(TestReport& report) {
 }
 
 
-bool nearValue(float a, float b) { return std::fabs(a - b) < 0.01f; }
-
 /// The parts of a view the layout checks care about, as a rect.
 sf::FloatRect viewRect(const sf::Vector2u& windowSize) {
   const sf::View view = Renderer::viewFor(windowSize);
@@ -635,6 +666,61 @@ void testAiOpponent(TestReport& report) {
   report.check(deterministic, "two brains fed the same match play it the same way");
 }
 
+/// The parser lives in `cli.cpp` so the checks can hand it the same strings a
+/// shell would, without a window or an OpenGL context.
+void testCommandLine(TestReport& report) {
+  std::cout << "command line\n";
+
+  const auto parse = [](const std::vector<std::string>& arguments) {
+    return parseOptions(arguments);
+  };
+
+  const ParsedOptions defaults = parse({});
+  report.check(defaults.ok && !defaults.wantsHelp && !defaults.options.runSelfTest &&
+                   !defaults.options.cpuOpponent && !defaults.options.fullscreen &&
+                   !defaults.options.hasSeed && defaults.options.screenshotPath.empty() &&
+                   defaults.options.scale == 1 && defaults.options.frameCap == 60 &&
+                   nearValue(defaults.options.autoplaySeconds, 0.f),
+               "an empty command line gives the documented defaults");
+
+  const ParsedOptions all = parse({"--cpu", "--seed", "42", "--fps", "0", "--scale", "2",
+                                   "--fullscreen", "--autoplay", "2.5", "--screenshot",
+                                   "shot.png"});
+  report.check(all.ok && all.options.cpuOpponent && all.options.fullscreen &&
+                   all.options.hasSeed && all.options.seed == 42 && all.options.frameCap == 0 &&
+                   all.options.scale == 2 && nearValue(all.options.autoplaySeconds, 2.5f) &&
+                   all.options.screenshotPath == "shot.png",
+               "every option can be combined in any order");
+
+  report.check(parse({"--help"}).wantsHelp && parse({"-h"}).wantsHelp,
+               "both spellings of the help flag ask for the usage text");
+  report.check(parse({"--test"}).options.runSelfTest, "--test is an alias for --selftest");
+
+  const ParsedOptions unknown = parse({"--nope"});
+  report.check(!unknown.ok && unknown.error.find("--nope") != std::string::npos,
+               "an unknown option is an error that names it");
+  report.check(!parse({"--fps"}).ok, "an option that needs a value fails without one");
+  report.check(!parse({"--screenshot"}).ok && !parse({"--screenshot", ""}).ok,
+               "--screenshot needs a file name");
+  report.check(!parse({"--fps", "fast"}).ok && !parse({"--fps", "-1"}).ok &&
+                   !parse({"--fps", "12x"}).ok &&
+                   !parse({"--fps", std::to_string(kMaxFrameCap + 1)}).ok,
+               "--fps rejects text, negative numbers, trailing junk and too large caps");
+  report.check(!parse({"--scale", "0"}).ok && !parse({"--scale", "9"}).ok,
+               "--scale only accepts the documented 1 to 4");
+  report.check(!parse({"--seed", "-3"}).ok && !parse({"--seed", "4294967296"}).ok,
+               "--seed rejects negative numbers and values that do not fit 32 bits");
+  report.check(!parse({"--autoplay", "soon"}).ok, "--autoplay needs a number of seconds");
+
+  const std::string usage = usageText();
+  bool everyOptionListed = true;
+  for (const char* flag : {"--selftest", "--seed", "--cpu", "--fps", "--scale", "--fullscreen",
+                           "--screenshot", "--autoplay", "--help"}) {
+    everyOptionListed = everyOptionListed && usage.find(flag) != std::string::npos;
+  }
+  report.check(everyOptionListed, "the usage text lists every option");
+}
+
 }  // namespace
 
 bool runSelfTest() {
@@ -642,6 +728,7 @@ bool runSelfTest() {
 
   TestReport report;
   testFreshMatch(report);
+  testMatchRules(report);
   testArenaLayout(report);
   testWallCollision(report);
   testBombPlacement(report);
@@ -653,6 +740,7 @@ bool runSelfTest() {
   testRandomPlay(report);
   testAiOpponent(report);
   testLayoutView(report);
+  testCommandLine(report);
   testSpriteArt(report);
 
   std::cout << "\n" << report.passed << " checks passed, " << report.failed << " failed\n";

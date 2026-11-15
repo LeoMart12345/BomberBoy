@@ -22,6 +22,16 @@ bool isHorizontal(Direction dir) {
   return dir == Direction::Left || dir == Direction::Right;
 }
 
+/// True when the player's body box touches the tile. Flames and pickups both use
+/// it, so "standing on something" always means the same thing to the two.
+bool overlapsTile(const Vec2& pos, TileCoord tile) {
+  const float half = Game::kPlayerHalfSize;
+  const float left = static_cast<float>(tile.x);
+  const float top = static_cast<float>(tile.y);
+  return pos.x + half > left && pos.x - half < left + 1.f && pos.y + half > top &&
+         pos.y - half < top + 1.f;
+}
+
 }  // namespace
 
 Game::Game(std::uint32_t seed) : Game(seed, MatchRules{}) {}
@@ -96,14 +106,14 @@ void Game::generateMap() {
       const bool border = x == 0 || y == 0 || x == kCols - 1 || y == kRows - 1;
       const bool pillar = x % 2 == 0 && y % 2 == 0;
       if (border || pillar) {
-        m_tiles[y * kCols + x] = Tile::Wall;
+        tileRef(x, y) = Tile::Wall;
       }
     }
   }
 
   for (int y = 1; y < kRows - 1; ++y) {
     for (int x = 1; x < kCols - 1; ++x) {
-      if (m_tiles[y * kCols + x] != Tile::Floor) {
+      if (tileRef(x, y) != Tile::Floor) {
         continue;
       }
       // Each spawn keeps a three tile pocket open: the spawn tile itself plus the
@@ -125,7 +135,7 @@ void Game::generateMap() {
       }
       constexpr float kBrickChance = 0.72f;
       if (randomChance(m_rng, kBrickChance)) {
-        m_tiles[y * kCols + x] = Tile::Brick;
+        tileRef(x, y) = Tile::Brick;
       }
     }
   }
@@ -145,9 +155,8 @@ void Game::generateMap() {
           (tile.x == lane[1].x && tile.y == lane[1].y)) {
         continue;
       }
-      if (m_tiles[static_cast<std::size_t>(tile.y * kCols + tile.x)] == Tile::Floor &&
-          !(tile.x % 2 == 0 && tile.y % 2 == 0)) {
-        m_tiles[static_cast<std::size_t>(tile.y * kCols + tile.x)] = Tile::Brick;
+      if (tileRef(tile.x, tile.y) == Tile::Floor && !(tile.x % 2 == 0 && tile.y % 2 == 0)) {
+        tileRef(tile.x, tile.y) = Tile::Brick;
       }
     }
   }
@@ -354,7 +363,7 @@ void Game::destroyBrick(TileCoord tile) {
   if (tileAt(tile.x, tile.y) != Tile::Brick) {
     return;
   }
-  m_tiles[static_cast<std::size_t>(tile.y * kCols + tile.x)] = Tile::Floor;
+  tileRef(tile.x, tile.y) = Tile::Floor;
 
   constexpr float kPowerUpChance = 0.28f;
   if (!randomChance(m_rng, kPowerUpChance)) {
@@ -385,16 +394,12 @@ void Game::applyFlameDamage() {
     if (!player.alive) {
       continue;
     }
-    for (const Flame& flame : m_flames) {
-      const float left = static_cast<float>(flame.tile.x);
-      const float top = static_cast<float>(flame.tile.y);
-      const float right = left + 1.f;
-      const float bottom = top + 1.f;
-      if (player.pos.x + kPlayerHalfSize > left && player.pos.x - kPlayerHalfSize < right &&
-          player.pos.y + kPlayerHalfSize > top && player.pos.y - kPlayerHalfSize < bottom) {
-        player.alive = false;
-        break;
-      }
+    const bool burnt =
+        std::any_of(m_flames.begin(), m_flames.end(), [&player](const Flame& flame) {
+          return overlapsTile(player.pos, flame.tile);
+        });
+    if (burnt) {
+      player.alive = false;
     }
   }
 }
@@ -402,15 +407,7 @@ void Game::applyFlameDamage() {
 
 void Game::collectPowerUps(Player& player) {
   for (auto it = m_powerUps.begin(); it != m_powerUps.end();) {
-    const float left = static_cast<float>(it->tile.x);
-    const float top = static_cast<float>(it->tile.y);
-    const float right = left + 1.f;
-    const float bottom = top + 1.f;
-    const bool overlapping = player.pos.x + kPlayerHalfSize > left &&
-                             player.pos.x - kPlayerHalfSize < right &&
-                             player.pos.y + kPlayerHalfSize > top &&
-                             player.pos.y - kPlayerHalfSize < bottom;
-    if (!overlapping) {
+    if (!overlapsTile(player.pos, it->tile)) {
       ++it;
       continue;
     }
@@ -534,6 +531,10 @@ bool Game::bombAt(TileCoord tile, int* bombIndex) const {
 
 TileCoord Game::centerTile(const Vec2& pos) const {
   return TileCoord{static_cast<int>(std::floor(pos.x)), static_cast<int>(std::floor(pos.y))};
+}
+
+Tile& Game::tileRef(int x, int y) {
+  return m_tiles[static_cast<std::size_t>(y * kCols + x)];
 }
 
 Tile Game::tileAt(int x, int y) const {
