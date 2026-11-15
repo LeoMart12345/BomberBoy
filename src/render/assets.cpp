@@ -1,4 +1,4 @@
-#include "assets.hpp"
+#include "render/assets.hpp"
 
 #include <cstdlib>
 #include <fstream>

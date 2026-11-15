@@ -1,4 +1,4 @@
-#include "ai.hpp"
+#include "core/ai.hpp"
 
 #include <algorithm>
 #include <array>

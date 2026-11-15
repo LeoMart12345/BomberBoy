@@ -1,7 +1,7 @@
 # BomberBoy
 
 A two-player, same-keyboard Bomberman-style arena battle written in C++17 with
-[SFML](https://www.sfml-dev.org/) 2.6. The arena is drawn with a small pixel-art
+[SFML](https://www.sfml-dev.org/) 3.x. The arena is drawn with a small pixel-art
 sprite set that ships in `assets/sprites`, and every sprite can be replaced with
 your own PNGs; a shape-drawn fallback keeps the game playable without any art on
 disk.
@@ -33,12 +33,14 @@ disk.
 
 ## Requirements
 
-- A C++17 compiler (GCC, Clang or MSVC)
-- CMake 3.16+ *or* GNU Make
-- SFML 2.5/2.6 (`graphics`, `window` and `system` modules)
+- A C++17 compiler (GCC 9+, Clang 9+ or MSVC 2019+)
+- CMake 3.24+ *or* GNU Make
+- SFML 3.x (`Graphics`, `Window` and `System` modules)
 - A system font for the HUD text (see [Fonts](#fonts))
 
-Install SFML on common distributions:
+Install SFML 3 on common distributions (package versions vary; if your
+distribution still ships SFML 2.6, use the CMake build below and it will fetch
+and compile SFML 3.0.2 automatically):
 
 ```bash
 sudo apt install libsfml-dev          # Debian / Ubuntu
@@ -46,6 +48,28 @@ sudo dnf install SFML-devel           # Fedora
 sudo pacman -S sfml                   # Arch
 brew install sfml                     # macOS
 ```
+
+The CMake fallback builds SFML from source, so it needs SFML's own development
+dependencies. On Debian/Ubuntu, for example:
+
+```bash
+sudo apt install build-essential cmake \
+  libxrandr-dev libxcursor-dev libxi-dev libudev-dev \
+  libfreetype-dev libgl1-mesa-dev libegl1-mesa-dev
+```
+
+If SFML 3 is already installed, CMake uses it directly. When it lives outside the
+default search path, point the build at it with `SFML_PREFIX` (a cache or
+environment variable), `CMAKE_PREFIX_PATH` or `SFML_DIR`; CMake also asks
+`pkg-config` for an SFML 3 prefix before it falls back to the source build:
+
+```bash
+cmake -S . -B build -DSFML_PREFIX=/path/to/sfml3
+SFML_PREFIX=/path/to/sfml3 cmake -S . -B build
+```
+
+Pass `-DBOMBERBOY_FETCH_SFML=OFF` to disable the fallback and make a missing
+SFML 3 installation a clear configure error instead.
 
 ## Build
 
@@ -57,10 +81,21 @@ cmake --build build -j
 ./build/bomberboy
 ```
 
-With the convenience Makefile:
+If SFML 3 is in a non-standard prefix, point CMake at it:
 
 ```bash
-make          # builds ./bomberboy
+cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/sfml3
+# or
+cmake -S . -B build -DSFML_PREFIX=/path/to/sfml3
+```
+
+With the convenience Makefile (it needs SFML 3 to be discoverable through
+`pkg-config`; `SFML_PREFIX` covers a custom install, and otherwise the Makefile
+reuses the SFML 3 that CMake already found in `build/`):
+
+```bash
+make                              # builds ./bomberboy
+SFML_PREFIX=/path/to/sfml3 make   # custom SFML 3 prefix
 make run
 ```
 
@@ -242,12 +277,12 @@ for a zero-sized one. That is pure math on `sf::View`, so it also runs headless.
 ```
 CMakeLists.txt          CMake build (also registers the CTest self-test)
 Makefile                plain g++ build: make, make run, make test, make assets
-src/game.hpp  game.cpp  arena, players, bombs, flames, power-ups, scoring (SFML-free)
-src/ai.hpp  ai.cpp      the computer opponent that drives player two
-src/cli.hpp  cli.cpp    strict command line parsing and the --help text
-src/renderer.*          sprite and shape drawing: tiles, bombs, flames, players, HUD
-src/assets.*            sprite-sheet loading and the assets/sprites search path
-src/selftest.*          the headless checks behind --selftest
+src/core/game.*         arena, players, bombs, flames, power-ups, scoring (SFML-free)
+src/core/ai.*           the computer opponent that drives player two (SFML-free)
+src/cli/cli.*           strict command line parsing and the --help text
+src/render/renderer.*   sprite and shape drawing: tiles, bombs, flames, players, HUD
+src/render/assets.*     sprite-sheet loading and the assets/sprites search path
+src/tests/selftest.*    the headless checks behind --selftest
 src/main.cpp            window, input mapping, rendering loop, demo replay
 tools/generate_assets.cpp  regenerates the pixel-art PNGs in assets/sprites
 assets/sprites/*.png    the 16 x 16 sprite set used by the renderer

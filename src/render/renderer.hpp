@@ -2,10 +2,11 @@
 
 #include <SFML/Graphics.hpp>
 
+#include <cstdint>
 #include <string>
 
-#include "assets.hpp"
-#include "game.hpp"
+#include "core/game.hpp"
+#include "render/assets.hpp"
 
 namespace bb {
 
@@ -84,7 +85,7 @@ class Renderer {
   /// The power-up sprite for `kind`, or a coloured badge when the art is missing.
   void drawStatIcon(PowerUpKind kind, const sf::Vector2f& center, float size);
   void drawSprite(const sf::Texture& texture, const sf::Vector2f& center, float size,
-                  sf::Uint8 alpha = 255, float rotation = 0.f);
+                  std::uint8_t alpha = 255, float rotation = 0.f);
 
   sf::Vector2f tileCenter(TileCoord tile) const;
   static float fieldTop();

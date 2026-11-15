@@ -1,4 +1,4 @@
-#include "selftest.hpp"
+#include "tests/selftest.hpp"
 
 #include <array>
 #include <cmath>
@@ -9,11 +9,11 @@
 #include <string>
 #include <vector>
 
-#include "ai.hpp"
-#include "assets.hpp"
-#include "cli.hpp"
-#include "game.hpp"
-#include "renderer.hpp"
+#include "cli/cli.hpp"
+#include "core/ai.hpp"
+#include "core/game.hpp"
+#include "render/assets.hpp"
+#include "render/renderer.hpp"
 
 namespace bb {
 namespace {
@@ -550,7 +550,7 @@ sf::FloatRect viewRect(const sf::Vector2u& windowSize) {
   const sf::View view = Renderer::viewFor(windowSize);
   const sf::Vector2f size = view.getSize();
   const sf::Vector2f center = view.getCenter();
-  return sf::FloatRect(center.x - size.x * 0.5f, center.y - size.y * 0.5f, size.x, size.y);
+  return sf::FloatRect({center.x - size.x * 0.5f, center.y - size.y * 0.5f}, {size.x, size.y});
 }
 
 /// The window can be resized and switched to fullscreen, so the mapping from the
@@ -564,32 +564,33 @@ void testLayoutView(TestReport& report) {
   const auto width = Renderer::kWindowWidth;
   const auto height = Renderer::kWindowHeight;
 
-  const sf::FloatRect native = viewRect(sf::Vector2u(width, height));
-  report.check(nearValue(native.width, canvasWidth) && nearValue(native.height, canvasHeight) &&
-                   nearValue(native.left, 0.f) && nearValue(native.top, 0.f),
+  const sf::FloatRect native = viewRect(sf::Vector2u{width, height});
+  report.check(nearValue(native.size.x, canvasWidth) && nearValue(native.size.y, canvasHeight) &&
+                   nearValue(native.position.x, 0.f) && nearValue(native.position.y, 0.f),
                "a 720x718 window shows exactly the canvas");
 
-  const sf::FloatRect doubled = viewRect(sf::Vector2u(width * 2, height * 2));
-  report.check(nearValue(doubled.width, canvasWidth) && nearValue(doubled.height, canvasHeight),
+  const sf::FloatRect doubled = viewRect(sf::Vector2u{width * 2, height * 2});
+  report.check(nearValue(doubled.size.x, canvasWidth) && nearValue(doubled.size.y, canvasHeight),
                "a 2x window zooms the canvas instead of showing more of it");
 
-  const sf::FloatRect odd = viewRect(sf::Vector2u(1000, 800));
-  report.check(nearValue(odd.width, 1000.f) && nearValue(odd.height, 800.f) &&
-                   nearValue(odd.left, -140.f) && nearValue(odd.top, -41.f),
+  const sf::FloatRect odd = viewRect(sf::Vector2u{1000, 800});
+  report.check(nearValue(odd.size.x, 1000.f) && nearValue(odd.size.y, 800.f) &&
+                   nearValue(odd.position.x, -140.f) && nearValue(odd.position.y, -41.f),
                "an odd window size keeps the canvas centred with bars around it");
 
-  const sf::FloatRect small = viewRect(sf::Vector2u(360, 359));
-  report.check(nearValue(small.width, canvasWidth) && nearValue(small.height, canvasHeight) &&
-                   nearValue(small.left, 0.f) && nearValue(small.top, 0.f),
+  const sf::FloatRect small = viewRect(sf::Vector2u{360, 359});
+  report.check(nearValue(small.size.x, canvasWidth) && nearValue(small.size.y, canvasHeight) &&
+                   nearValue(small.position.x, 0.f) && nearValue(small.position.y, 0.f),
                "a window smaller than the canvas still shows all of it");
 
-  const sf::FloatRect tall = viewRect(sf::Vector2u(width, height * 2));
-  report.check(nearValue(tall.left, 0.f) && nearValue(tall.top, -canvasHeight * 0.5f) &&
-                   nearValue(tall.width, canvasWidth) && nearValue(tall.height, height * 2.f),
+  const sf::FloatRect tall = viewRect(sf::Vector2u{width, height * 2});
+  report.check(nearValue(tall.position.x, 0.f) &&
+                   nearValue(tall.position.y, -canvasHeight * 0.5f) &&
+                   nearValue(tall.size.x, canvasWidth) && nearValue(tall.size.y, height * 2.f),
                "a tall window letterboxes the canvas vertically");
 
-  const sf::FloatRect degenerate = viewRect(sf::Vector2u(0, 0));
-  report.check(degenerate.width > 0.f && degenerate.height > 0.f,
+  const sf::FloatRect degenerate = viewRect(sf::Vector2u{0, 0});
+  report.check(degenerate.size.x > 0.f && degenerate.size.y > 0.f,
                "a zero sized window never asks for a degenerate view");
 }
 

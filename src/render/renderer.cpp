@@ -1,4 +1,4 @@
-#include "renderer.hpp"
+#include "render/renderer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -49,8 +49,8 @@ sf::Color playerDark(int index) {
 
 float clamp01(float value) { return std::clamp(value, 0.f, 1.f); }
 
-sf::Uint8 alphaOf(float ratio, float maxAlpha) {
-  return static_cast<sf::Uint8>(std::clamp(ratio, 0.f, 1.f) * maxAlpha);
+std::uint8_t alphaOf(float ratio, float maxAlpha) {
+  return static_cast<std::uint8_t>(std::clamp(ratio, 0.f, 1.f) * maxAlpha);
 }
 
 bool readable(const char* path) {
@@ -92,14 +92,14 @@ void Renderer::loadFont() {
   m_hasFont = false;
 
   // After a context switch the same font file is loaded again first.
-  if (!m_fontPath.empty() && m_font.loadFromFile(m_fontPath)) {
+  if (!m_fontPath.empty() && m_font.openFromFile(m_fontPath)) {
     m_hasFont = true;
     return;
   }
   m_fontPath.clear();
 
   if (const char* custom = std::getenv("BOMBERBOY_FONT")) {
-    if (readable(custom) && m_font.loadFromFile(custom)) {
+    if (readable(custom) && m_font.openFromFile(custom)) {
       m_hasFont = true;
       m_fontPath = custom;
       return;
@@ -108,7 +108,7 @@ void Renderer::loadFont() {
 
   for (std::size_t i = 0; !m_hasFont && i < kFontCandidates.size(); ++i) {
     const char* path = kFontCandidates[i];
-    if (readable(path) && m_font.loadFromFile(path)) {
+    if (readable(path) && m_font.openFromFile(path)) {
       m_hasFont = true;
       m_fontPath = path;
     }
@@ -139,8 +139,9 @@ sf::View Renderer::viewFor(const sf::Vector2u& windowSize) {
   // The canvas is centred; whatever is left over shows the clear colour.
   const float viewWidth = windowWidth / scale;
   const float viewHeight = windowHeight / scale;
-  return sf::View(sf::FloatRect((logicalWidth - viewWidth) * 0.5f, (logicalHeight - viewHeight) * 0.5f,
-                                viewWidth, viewHeight));
+  return sf::View(
+      sf::FloatRect({(logicalWidth - viewWidth) * 0.5f, (logicalHeight - viewHeight) * 0.5f},
+                    {viewWidth, viewHeight}));
 }
 
 float Renderer::fieldTop() { return static_cast<float>(kHudHeight); }
@@ -160,17 +161,17 @@ int Renderer::facingIndex(Direction facing) {
 }
 
 void Renderer::drawSprite(const sf::Texture& texture, const sf::Vector2f& center, float size,
-                          sf::Uint8 alpha, float rotation) {
+                          std::uint8_t alpha, float rotation) {
   const sf::Vector2u texSize = texture.getSize();
   if (texSize.x == 0 || texSize.y == 0) {
     return;
   }
   sf::Sprite sprite(texture);
-  sprite.setOrigin(static_cast<float>(texSize.x) * 0.5f, static_cast<float>(texSize.y) * 0.5f);
+  sprite.setOrigin({static_cast<float>(texSize.x) * 0.5f, static_cast<float>(texSize.y) * 0.5f});
   const float scale = size / static_cast<float>(texSize.x);
-  sprite.setScale(scale, size / static_cast<float>(texSize.y));
+  sprite.setScale({scale, size / static_cast<float>(texSize.y)});
   sprite.setPosition(center);
-  sprite.setRotation(rotation);
+  sprite.setRotation(sf::degrees(rotation));
   sprite.setColor(sf::Color(255, 255, 255, alpha));
   m_target.draw(sprite);
 }
@@ -185,20 +186,17 @@ void Renderer::drawText(const std::string& text, unsigned size, float x, float y
   if (!m_hasFont) {
     return;
   }
-  sf::Text label;
-  label.setFont(m_font);
-  label.setString(text);
-  label.setCharacterSize(size);
+  sf::Text label(m_font, text, size);
   label.setFillColor(color);
   if (bold) {
-    label.setStyle(sf::Text::Bold);
+    label.setStyle(sf::Text::Style::Bold);
   }
   if (centered) {
     const sf::FloatRect bounds = label.getLocalBounds();
-    label.setPosition(std::round(x - bounds.left - bounds.width * 0.5f),
-                      std::round(y - bounds.top - bounds.height * 0.5f));
+    label.setPosition({std::round(x - bounds.position.x - bounds.size.x * 0.5f),
+                       std::round(y - bounds.position.y - bounds.size.y * 0.5f)});
   } else {
-    label.setPosition(std::round(x), std::round(y));
+    label.setPosition({std::round(x), std::round(y)});
   }
   m_target.draw(label);
 }
@@ -208,14 +206,11 @@ float Renderer::textWidth(const std::string& text, unsigned size, bool bold) {
     // Rough stand-in so the layout does not collapse when no font was found.
     return static_cast<float>(text.size()) * static_cast<float>(size) * 0.58f;
   }
-  sf::Text label;
-  label.setFont(m_font);
-  label.setString(text);
-  label.setCharacterSize(size);
+  sf::Text label(m_font, text, size);
   if (bold) {
-    label.setStyle(sf::Text::Bold);
+    label.setStyle(sf::Text::Style::Bold);
   }
-  return label.getLocalBounds().width;
+  return label.getLocalBounds().size.x;
 }
 
 void Renderer::drawTextLeft(const std::string& text, unsigned size, float x, float centerY,
@@ -223,15 +218,12 @@ void Renderer::drawTextLeft(const std::string& text, unsigned size, float x, flo
   if (!m_hasFont) {
     return;
   }
-  sf::Text label;
-  label.setFont(m_font);
-  label.setString(text);
-  label.setCharacterSize(size);
+  sf::Text label(m_font, text, size);
   label.setFillColor(color);
-  label.setStyle(sf::Text::Bold);
+  label.setStyle(sf::Text::Style::Bold);
   const sf::FloatRect bounds = label.getLocalBounds();
-  label.setPosition(std::round(x - bounds.left),
-                    std::round(centerY - bounds.top - bounds.height * 0.5f));
+  label.setPosition({std::round(x - bounds.position.x),
+                     std::round(centerY - bounds.position.y - bounds.size.y * 0.5f)});
   m_target.draw(label);
 }
 
@@ -254,8 +246,8 @@ void Renderer::drawStatIcon(PowerUpKind kind, const sf::Vector2f& center, float 
     fill = sf::Color(110, 220, 160);
   }
 
-  sf::RectangleShape badge(sf::Vector2f(size, size));
-  badge.setOrigin(size * 0.5f, size * 0.5f);
+  sf::RectangleShape badge(sf::Vector2f{size, size});
+  badge.setOrigin({size * 0.5f, size * 0.5f});
   badge.setPosition(center);
   badge.setFillColor(sf::Color(fill.r, fill.g, fill.b, 40));
   badge.setOutlineThickness(1.5f);
@@ -266,8 +258,8 @@ void Renderer::drawStatIcon(PowerUpKind kind, const sf::Vector2f& center, float 
 void Renderer::drawPip(float x, float y, sf::Color color, bool filled) {
   constexpr float kRadius = 6.f;
   sf::CircleShape pip(kRadius, 20);
-  pip.setOrigin(kRadius, kRadius);
-  pip.setPosition(x, y);
+  pip.setOrigin({kRadius, kRadius});
+  pip.setPosition({x, y});
   if (filled) {
     pip.setFillColor(color);
   } else {
@@ -307,19 +299,19 @@ void Renderer::drawFloor() {
     return;
   }
 
-  sf::RectangleShape tile(sf::Vector2f(kTileSize, kTileSize));
-  sf::RectangleShape line(sf::Vector2f(kTileSize, 1.f));
+  sf::RectangleShape tile(sf::Vector2f{kTileSize, kTileSize});
+  sf::RectangleShape line(sf::Vector2f{kTileSize, 1.f});
 
   for (int y = 0; y < kRows; ++y) {
     for (int x = 0; x < kCols; ++x) {
       const float px = static_cast<float>(x) * kTileSize;
       const float py = fieldTop() + static_cast<float>(y) * kTileSize;
-      tile.setPosition(px, py);
+      tile.setPosition({px, py});
       tile.setFillColor((x + y) % 2 == 0 ? kFloorA : kFloorB);
       m_target.draw(tile);
 
       if (y + 1 < kRows) {
-        line.setPosition(px, py + kTileSize);
+        line.setPosition({px, py + kTileSize});
         line.setFillColor(kFloorLine);
         m_target.draw(line);
       }
@@ -345,11 +337,11 @@ void Renderer::drawTiles(const Game& game) {
   constexpr float kInset = 1.f;
   constexpr float kBlockSize = kTileSize - 2.f * kInset;
 
-  sf::RectangleShape block(sf::Vector2f(kBlockSize, kBlockSize));
+  sf::RectangleShape block(sf::Vector2f{kBlockSize, kBlockSize});
   block.setOutlineThickness(1.f);
-  sf::RectangleShape strip(sf::Vector2f(kBlockSize - 6.f, 3.f));
-  sf::RectangleShape mortar(sf::Vector2f(kBlockSize - 4.f, 2.f));
-  sf::RectangleShape joint(sf::Vector2f(2.f, 12.f));
+  sf::RectangleShape strip(sf::Vector2f{kBlockSize - 6.f, 3.f});
+  sf::RectangleShape mortar(sf::Vector2f{kBlockSize - 4.f, 2.f});
+  sf::RectangleShape joint(sf::Vector2f{2.f, 12.f});
 
   for (int y = 0; y < kRows; ++y) {
     for (int x = 0; x < kCols; ++x) {
@@ -360,18 +352,18 @@ void Renderer::drawTiles(const Game& game) {
 
       const float px = static_cast<float>(x) * kTileSize + kInset;
       const float py = fieldTop() + static_cast<float>(y) * kTileSize + kInset;
-      block.setPosition(px, py);
+      block.setPosition({px, py});
 
       if (tileType == Tile::Wall) {
         block.setFillColor(kWallFill);
         block.setOutlineColor(kWallDark);
         m_target.draw(block);
 
-        strip.setPosition(px + 3.f, py + 3.f);
+        strip.setPosition({px + 3.f, py + 3.f});
         strip.setFillColor(kWallLight);
         m_target.draw(strip);
 
-        strip.setPosition(px + 3.f, py + kBlockSize - 6.f);
+        strip.setPosition({px + 3.f, py + kBlockSize - 6.f});
         strip.setFillColor(kWallDark);
         m_target.draw(strip);
       } else {
@@ -380,21 +372,21 @@ void Renderer::drawTiles(const Game& game) {
         m_target.draw(block);
 
         mortar.setFillColor(kBrickMortar);
-        mortar.setPosition(px + 2.f, py + 14.f);
+        mortar.setPosition({px + 2.f, py + 14.f});
         m_target.draw(mortar);
-        mortar.setPosition(px + 2.f, py + 28.f);
+        mortar.setPosition({px + 2.f, py + 28.f});
         m_target.draw(mortar);
 
         joint.setFillColor(kBrickMortar);
-        joint.setPosition(px + 12.f, py + 3.f);
+        joint.setPosition({px + 12.f, py + 3.f});
         m_target.draw(joint);
-        joint.setPosition(px + 30.f, py + 3.f);
+        joint.setPosition({px + 30.f, py + 3.f});
         m_target.draw(joint);
-        joint.setPosition(px + 21.f, py + 17.f);
+        joint.setPosition({px + 21.f, py + 17.f});
         m_target.draw(joint);
-        joint.setPosition(px + 6.f, py + 31.f);
+        joint.setPosition({px + 6.f, py + 31.f});
         m_target.draw(joint);
-        joint.setPosition(px + 36.f, py + 31.f);
+        joint.setPosition({px + 36.f, py + 31.f});
         m_target.draw(joint);
       }
     }
@@ -410,14 +402,14 @@ void Renderer::drawPowerUps(const Game& game) {
       const float size = kTileSize * 0.78f;
 
       sf::CircleShape shadow(size * 0.42f, 20);
-      shadow.setOrigin(size * 0.42f, size * 0.42f);
-      shadow.setScale(1.f, 0.32f);
-      shadow.setPosition(center.x, center.y + size * 0.44f);
+      shadow.setOrigin({size * 0.42f, size * 0.42f});
+      shadow.setScale({1.f, 0.32f});
+      shadow.setPosition({center.x, center.y + size * 0.44f});
       shadow.setFillColor(sf::Color(0, 0, 0, 110));
       m_target.draw(shadow);
 
       const auto icon = static_cast<std::size_t>(powerUp.kind);
-      drawSprite(m_sprites.powerUp[icon], sf::Vector2f(center.x, center.y + bob), size);
+      drawSprite(m_sprites.powerUp[icon], sf::Vector2f{center.x, center.y + bob}, size);
     }
     return;
   }
@@ -436,15 +428,15 @@ void Renderer::drawPowerUps(const Game& game) {
     }
 
     sf::CircleShape shadow(size * 0.5f, 24);
-    shadow.setOrigin(size * 0.5f, size * 0.5f);
-    shadow.setScale(0.9f, 0.35f);
-    shadow.setPosition(center.x, center.y + size * 0.55f);
+    shadow.setOrigin({size * 0.5f, size * 0.5f});
+    shadow.setScale({0.9f, 0.35f});
+    shadow.setPosition({center.x, center.y + size * 0.55f});
     shadow.setFillColor(sf::Color(0, 0, 0, 90));
     m_target.draw(shadow);
 
-    sf::RectangleShape base(sf::Vector2f(size, size));
-    base.setOrigin(size * 0.5f, size * 0.5f);
-    base.setPosition(center.x, center.y + bob);
+    sf::RectangleShape base(sf::Vector2f{size, size});
+    base.setOrigin({size * 0.5f, size * 0.5f});
+    base.setPosition({center.x, center.y + bob});
     base.setFillColor(sf::Color(240, 244, 250));
     base.setOutlineThickness(3.f);
     base.setOutlineColor(accent);
@@ -455,54 +447,54 @@ void Renderer::drawPowerUps(const Game& game) {
 
     if (powerUp.kind == PowerUpKind::ExtraBomb) {
       sf::CircleShape bomb(size * 0.22f, 20);
-      bomb.setOrigin(size * 0.22f, size * 0.22f);
-      bomb.setPosition(iconX, iconY + 1.f);
+      bomb.setOrigin({size * 0.22f, size * 0.22f});
+      bomb.setPosition({iconX, iconY + 1.f});
       bomb.setFillColor(sf::Color(34, 40, 54));
       m_target.draw(bomb);
 
       sf::CircleShape glint(size * 0.07f, 12);
-      glint.setOrigin(size * 0.07f, size * 0.07f);
-      glint.setPosition(iconX - size * 0.07f, iconY - size * 0.05f);
+      glint.setOrigin({size * 0.07f, size * 0.07f});
+      glint.setPosition({iconX - size * 0.07f, iconY - size * 0.05f});
       glint.setFillColor(sf::Color(220, 235, 250));
       m_target.draw(glint);
     } else if (powerUp.kind == PowerUpKind::ExtraRange) {
-      sf::RectangleShape arm(sf::Vector2f(size * 0.52f, size * 0.17f));
-      arm.setOrigin(size * 0.26f, size * 0.085f);
-      arm.setPosition(iconX, iconY);
+      sf::RectangleShape arm(sf::Vector2f{size * 0.52f, size * 0.17f});
+      arm.setOrigin({size * 0.26f, size * 0.085f});
+      arm.setPosition({iconX, iconY});
       arm.setFillColor(sf::Color(255, 120, 40));
       m_target.draw(arm);
 
-      sf::RectangleShape column(sf::Vector2f(size * 0.17f, size * 0.52f));
-      column.setOrigin(size * 0.085f, size * 0.26f);
-      column.setPosition(iconX, iconY);
+      sf::RectangleShape column(sf::Vector2f{size * 0.17f, size * 0.52f});
+      column.setOrigin({size * 0.085f, size * 0.26f});
+      column.setPosition({iconX, iconY});
       column.setFillColor(sf::Color(255, 120, 40));
       m_target.draw(column);
 
-      sf::RectangleShape coreArm(sf::Vector2f(size * 0.26f, size * 0.08f));
-      coreArm.setOrigin(size * 0.13f, size * 0.04f);
-      coreArm.setPosition(iconX, iconY);
+      sf::RectangleShape coreArm(sf::Vector2f{size * 0.26f, size * 0.08f});
+      coreArm.setOrigin({size * 0.13f, size * 0.04f});
+      coreArm.setPosition({iconX, iconY});
       coreArm.setFillColor(sf::Color(255, 232, 150));
       m_target.draw(coreArm);
 
-      sf::RectangleShape coreColumn(sf::Vector2f(size * 0.08f, size * 0.26f));
-      coreColumn.setOrigin(size * 0.04f, size * 0.13f);
-      coreColumn.setPosition(iconX, iconY);
+      sf::RectangleShape coreColumn(sf::Vector2f{size * 0.08f, size * 0.26f});
+      coreColumn.setOrigin({size * 0.04f, size * 0.13f});
+      coreColumn.setPosition({iconX, iconY});
       coreColumn.setFillColor(sf::Color(255, 232, 150));
       m_target.draw(coreColumn);
     } else {
       sf::ConvexShape bolt(3);
-      bolt.setPoint(0, sf::Vector2f(size * 0.06f, -size * 0.26f));
-      bolt.setPoint(1, sf::Vector2f(-size * 0.18f, size * 0.05f));
-      bolt.setPoint(2, sf::Vector2f(size * 0.16f, size * 0.05f));
-      bolt.setPosition(iconX, iconY);
+      bolt.setPoint(0, sf::Vector2f{size * 0.06f, -size * 0.26f});
+      bolt.setPoint(1, sf::Vector2f{-size * 0.18f, size * 0.05f});
+      bolt.setPoint(2, sf::Vector2f{size * 0.16f, size * 0.05f});
+      bolt.setPosition({iconX, iconY});
       bolt.setFillColor(sf::Color(250, 190, 40));
       m_target.draw(bolt);
 
       sf::ConvexShape boltTail(3);
-      boltTail.setPoint(0, sf::Vector2f(-size * 0.04f, size * 0.26f));
-      boltTail.setPoint(1, sf::Vector2f(size * 0.18f, -size * 0.05f));
-      boltTail.setPoint(2, sf::Vector2f(-size * 0.16f, -size * 0.05f));
-      boltTail.setPosition(iconX, iconY);
+      boltTail.setPoint(0, sf::Vector2f{-size * 0.04f, size * 0.26f});
+      boltTail.setPoint(1, sf::Vector2f{size * 0.18f, -size * 0.05f});
+      boltTail.setPoint(2, sf::Vector2f{-size * 0.16f, -size * 0.05f});
+      boltTail.setPosition({iconX, iconY});
       boltTail.setFillColor(sf::Color(255, 210, 90));
       m_target.draw(boltTail);
     }
@@ -519,16 +511,16 @@ void Renderer::drawBombs(const Game& game) {
 
       // Warm halo so a bomb stays readable even while the bomber stands on it.
       sf::CircleShape halo(kTileSize * 0.5f, 28);
-      halo.setOrigin(kTileSize * 0.5f, kTileSize * 0.5f);
+      halo.setOrigin({kTileSize * 0.5f, kTileSize * 0.5f});
       halo.setPosition(center);
       halo.setFillColor(
-          sf::Color(255, 132, 40, static_cast<sf::Uint8>(26 + 70 * urgency)));
+          sf::Color(255, 132, 40, static_cast<std::uint8_t>(26 + 70 * urgency)));
       m_target.draw(halo);
 
       sf::CircleShape shadow(kTileSize * 0.32f, 22);
-      shadow.setOrigin(kTileSize * 0.32f, kTileSize * 0.32f);
-      shadow.setScale(1.f, 0.33f);
-      shadow.setPosition(center.x, center.y + kTileSize * 0.34f);
+      shadow.setOrigin({kTileSize * 0.32f, kTileSize * 0.32f});
+      shadow.setScale({1.f, 0.33f});
+      shadow.setPosition({center.x, center.y + kTileSize * 0.34f});
       shadow.setFillColor(sf::Color(0, 0, 0, 120));
       m_target.draw(shadow);
 
@@ -548,16 +540,16 @@ void Renderer::drawBombs(const Game& game) {
     const float radius = kTileSize * 0.30f * pulse;
 
     sf::CircleShape shadow(radius, 28);
-    shadow.setOrigin(radius, radius);
-    shadow.setScale(1.f, 0.34f);
-    shadow.setPosition(center.x, center.y + kTileSize * 0.30f);
+    shadow.setOrigin({radius, radius});
+    shadow.setScale({1.f, 0.34f});
+    shadow.setPosition({center.x, center.y + kTileSize * 0.30f});
     shadow.setFillColor(sf::Color(0, 0, 0, 110));
     m_target.draw(shadow);
 
-    sf::RectangleShape fuse(sf::Vector2f(3.f, kTileSize * 0.20f));
-    fuse.setOrigin(1.5f, kTileSize * 0.20f);
-    fuse.setPosition(center.x + radius * 0.35f, center.y - radius * 0.55f);
-    fuse.setRotation(28.f);
+    sf::RectangleShape fuse(sf::Vector2f{3.f, kTileSize * 0.20f});
+    fuse.setOrigin({1.5f, kTileSize * 0.20f});
+    fuse.setPosition({center.x + radius * 0.35f, center.y - radius * 0.55f});
+    fuse.setRotation(sf::degrees(28.f));
     fuse.setFillColor(sf::Color(206, 196, 176));
     m_target.draw(fuse);
 
@@ -567,22 +559,22 @@ void Renderer::drawBombs(const Game& game) {
     const float sparkY = center.y - radius * 0.55f - std::cos(kFuseAngle) * fuseLength;
     const float sparkRadius = 3.5f + std::sin(m_time * 24.f + bomb.tile.y) * 1.4f;
     sf::CircleShape spark(sparkRadius, 12);
-    spark.setOrigin(sparkRadius, sparkRadius);
-    spark.setPosition(sparkX, sparkY);
+    spark.setOrigin({sparkRadius, sparkRadius});
+    spark.setPosition({sparkX, sparkY});
     spark.setFillColor(sf::Color(255, 196, 74, 235));
     m_target.draw(spark);
 
     sf::CircleShape body(radius, 32);
-    body.setOrigin(radius, radius);
-    body.setPosition(center.x, center.y);
+    body.setOrigin({radius, radius});
+    body.setPosition({center.x, center.y});
     body.setFillColor(sf::Color(30, 33, 44));
     body.setOutlineThickness(2.5f);
     body.setOutlineColor(sf::Color(12, 14, 20));
     m_target.draw(body);
 
     sf::CircleShape highlight(radius * 0.30f, 20);
-    highlight.setOrigin(radius * 0.30f, radius * 0.30f);
-    highlight.setPosition(center.x - radius * 0.34f, center.y - radius * 0.36f);
+    highlight.setOrigin({radius * 0.30f, radius * 0.30f});
+    highlight.setPosition({center.x - radius * 0.34f, center.y - radius * 0.36f});
     highlight.setFillColor(sf::Color(255, 255, 255, 55));
     m_target.draw(highlight);
   }
@@ -596,7 +588,7 @@ void Renderer::drawFlames(const Game& game) {
       const sf::Vector2f center = tileCenter(flame.tile);
 
       halo.setRadius(kTileSize * 0.55f);
-      halo.setOrigin(kTileSize * 0.55f, kTileSize * 0.55f);
+      halo.setOrigin({kTileSize * 0.55f, kTileSize * 0.55f});
       halo.setPosition(center);
       halo.setFillColor(sf::Color(255, 132, 40, alphaOf(ratio, 70)));
       m_target.draw(halo);
@@ -616,10 +608,10 @@ void Renderer::drawFlames(const Game& game) {
 
   sf::ConvexShape glow;
   glow.setPointCount(4);
-  glow.setPoint(0, sf::Vector2f(0.f, -1.f));
-  glow.setPoint(1, sf::Vector2f(1.f, 0.f));
-  glow.setPoint(2, sf::Vector2f(0.f, 1.f));
-  glow.setPoint(3, sf::Vector2f(-1.f, 0.f));
+  glow.setPoint(0, sf::Vector2f{0.f, -1.f});
+  glow.setPoint(1, sf::Vector2f{1.f, 0.f});
+  glow.setPoint(2, sf::Vector2f{0.f, 1.f});
+  glow.setPoint(3, sf::Vector2f{-1.f, 0.f});
 
   sf::CircleShape halo(1.f, 24);
 
@@ -629,7 +621,7 @@ void Renderer::drawFlames(const Game& game) {
     const float wobble = std::sin(m_time * 18.f + static_cast<float>(flame.tile.x + flame.tile.y));
 
     halo.setRadius(kTileSize * 0.52f);
-    halo.setOrigin(kTileSize * 0.52f, kTileSize * 0.52f);
+    halo.setOrigin({kTileSize * 0.52f, kTileSize * 0.52f});
     halo.setPosition(center);
     halo.setFillColor(sf::Color(255, 128, 40, alphaOf(ratio, 55)));
     m_target.draw(halo);
@@ -640,9 +632,9 @@ void Renderer::drawFlames(const Game& game) {
 
     for (int layer = 0; layer < 3; ++layer) {
       const float scale = 1.f - layer * 0.28f;
-      glow.setScale(width * scale * flare, height * scale * flare);
-      glow.setPosition(center.x, center.y);
-      glow.setRotation(wobble * 6.f + static_cast<float>(layer) * 45.f);
+      glow.setScale({width * scale * flare, height * scale * flare});
+      glow.setPosition({center.x, center.y});
+      glow.setRotation(sf::degrees(wobble * 6.f + static_cast<float>(layer) * 45.f));
       if (layer == 0) {
         glow.setFillColor(sf::Color(255, 122, 32, alphaOf(ratio, 235)));
       } else if (layer == 1) {
@@ -666,10 +658,10 @@ void Renderer::drawBombMarkers(const Game& game) {
     const float urgency = 1.f - clamp01(bomb.fuse / Game::kBombFuse);
     const float pulse = std::sin(m_time * (3.f + urgency * 10.f) + bomb.tile.x * 0.8f);
     const float radius = kTileSize * (0.455f + 0.035f * pulse);
-    const sf::Uint8 alpha = static_cast<sf::Uint8>(70.f + 140.f * urgency);
+    const std::uint8_t alpha = static_cast<std::uint8_t>(70.f + 140.f * urgency);
 
     sf::CircleShape ring(radius, 36);
-    ring.setOrigin(radius, radius);
+    ring.setOrigin({radius, radius});
     ring.setPosition(tileCenter(bomb.tile));
     ring.setFillColor(sf::Color::Transparent);
     ring.setOutlineThickness(2.5f);
@@ -697,16 +689,16 @@ void Renderer::drawPlayer(const Player& player, int index) {
 
   if (m_sprites.ready()) {
     sf::CircleShape shadow(radius, 24);
-    shadow.setOrigin(radius, radius);
-    shadow.setScale(1.f, 0.36f);
-    shadow.setPosition(cx, fieldTop() + player.pos.y * kTileSize + kTileSize * 0.30f);
+    shadow.setOrigin({radius, radius});
+    shadow.setScale({1.f, 0.36f});
+    shadow.setPosition({cx, fieldTop() + player.pos.y * kTileSize + kTileSize * 0.30f});
     shadow.setFillColor(sf::Color(0, 0, 0, 110));
     m_target.draw(shadow);
 
     const int facing = facingIndex(player.facing);
     const auto playerIndex = static_cast<std::size_t>(index);
     drawSprite(m_sprites.player[playerIndex][static_cast<std::size_t>(facing)],
-               sf::Vector2f(cx, cy), kTileSize);
+               sf::Vector2f{cx, cy}, kTileSize);
     return;
   }
 
@@ -714,23 +706,23 @@ void Renderer::drawPlayer(const Player& player, int index) {
   const sf::Color dark = playerDark(index);
 
   sf::CircleShape shadow(radius, 24);
-  shadow.setOrigin(radius, radius);
-  shadow.setScale(1.f, 0.36f);
-  shadow.setPosition(cx, fieldTop() + player.pos.y * kTileSize + kTileSize * 0.30f);
+  shadow.setOrigin({radius, radius});
+  shadow.setScale({1.f, 0.36f});
+  shadow.setPosition({cx, fieldTop() + player.pos.y * kTileSize + kTileSize * 0.30f});
   shadow.setFillColor(sf::Color(0, 0, 0, 110));
   m_target.draw(shadow);
 
   sf::CircleShape body(radius, 32);
-  body.setOrigin(radius, radius);
-  body.setPosition(cx, cy);
+  body.setOrigin({radius, radius});
+  body.setPosition({cx, cy});
   body.setFillColor(color);
   body.setOutlineThickness(3.f);
   body.setOutlineColor(dark);
   m_target.draw(body);
 
   sf::CircleShape shine(radius * 0.32f, 16);
-  shine.setOrigin(radius * 0.32f, radius * 0.32f);
-  shine.setPosition(cx - radius * 0.34f, cy - radius * 0.40f);
+  shine.setOrigin({radius * 0.32f, radius * 0.32f});
+  shine.setPosition({cx - radius * 0.34f, cy - radius * 0.40f});
   shine.setFillColor(sf::Color(255, 255, 255, 70));
   m_target.draw(shine);
 
@@ -757,14 +749,14 @@ void Renderer::drawPlayer(const Player& player, int index) {
     const float eyeY = cy + faceY * forward + (faceY == 0.f ? side * spread : 0.f);
 
     sf::CircleShape white(eyeRadius, 16);
-    white.setOrigin(eyeRadius, eyeRadius);
-    white.setPosition(eyeX, eyeY);
+    white.setOrigin({eyeRadius, eyeRadius});
+    white.setPosition({eyeX, eyeY});
     white.setFillColor(sf::Color(250, 252, 255));
     m_target.draw(white);
 
     sf::CircleShape pupil(pupilRadius, 12);
-    pupil.setOrigin(pupilRadius, pupilRadius);
-    pupil.setPosition(eyeX + faceX * pupilRadius * 0.7f, eyeY + faceY * pupilRadius * 0.7f);
+    pupil.setOrigin({pupilRadius, pupilRadius});
+    pupil.setPosition({eyeX + faceX * pupilRadius * 0.7f, eyeY + faceY * pupilRadius * 0.7f});
     pupil.setFillColor(sf::Color(22, 26, 34));
     m_target.draw(pupil);
   }
@@ -773,12 +765,12 @@ void Renderer::drawPlayer(const Player& player, int index) {
 void Renderer::drawHud(const Game& game, const UiState& ui) {
   const float width = static_cast<float>(kWindowWidth);
 
-  sf::RectangleShape bar(sf::Vector2f(width, static_cast<float>(kHudHeight)));
+  sf::RectangleShape bar(sf::Vector2f{width, static_cast<float>(kHudHeight)});
   bar.setFillColor(kHudBackground);
   m_target.draw(bar);
 
-  sf::RectangleShape line(sf::Vector2f(width, 2.f));
-  line.setPosition(0.f, static_cast<float>(kHudHeight) - 2.f);
+  sf::RectangleShape line(sf::Vector2f{width, 2.f});
+  line.setPosition({0.f, static_cast<float>(kHudHeight) - 2.f});
   line.setFillColor(kHudLine);
   m_target.draw(line);
 
@@ -837,7 +829,7 @@ void Renderer::drawPlayerBlock(const Game& game, int index, bool rightAligned, b
 
   float cursor = rightAligned ? anchor - statsWidth : anchor;
   for (const auto& stat : stats) {
-    drawStatIcon(stat.first, sf::Vector2f(cursor + kIconSize * 0.5f, kStatsY), kIconSize);
+    drawStatIcon(stat.first, sf::Vector2f{cursor + kIconSize * 0.5f, kStatsY}, kIconSize);
     drawTextLeft(stat.second, 11, cursor + kIconSize + kIconGap, kStatsY, kTextMuted);
     cursor += kIconSize + kIconGap + textWidth(stat.second, 11) + kItemGap;
   }
@@ -847,13 +839,13 @@ void Renderer::drawFooter(const UiState& ui) {
   const float width = static_cast<float>(kWindowWidth);
   const float top = static_cast<float>(kWindowHeight - kFooterHeight);
 
-  sf::RectangleShape bar(sf::Vector2f(width, static_cast<float>(kFooterHeight)));
-  bar.setPosition(0.f, top);
+  sf::RectangleShape bar(sf::Vector2f{width, static_cast<float>(kFooterHeight)});
+  bar.setPosition({0.f, top});
   bar.setFillColor(kHudBackground);
   m_target.draw(bar);
 
-  sf::RectangleShape line(sf::Vector2f(width, 1.f));
-  line.setPosition(0.f, top);
+  sf::RectangleShape line(sf::Vector2f{width, 1.f});
+  line.setPosition({0.f, top});
   line.setFillColor(kHudLine);
   m_target.draw(line);
 
@@ -885,8 +877,8 @@ void Renderer::drawOverlays(const Game& game, const UiState& ui) {
   };
 
   if (game.state() == RoundState::RoundOver) {
-    sf::RectangleShape panel(sf::Vector2f(width, fieldHeight));
-    panel.setPosition(0.f, fieldTop());
+    sf::RectangleShape panel(sf::Vector2f{width, fieldHeight});
+    panel.setPosition({0.f, fieldTop()});
     panel.setFillColor(sf::Color(6, 10, 15, 208));
     m_target.draw(panel);
 
@@ -922,8 +914,8 @@ void Renderer::drawOverlays(const Game& game, const UiState& ui) {
   }
 
   if (ui.paused) {
-    sf::RectangleShape panel(sf::Vector2f(width, fieldHeight));
-    panel.setPosition(0.f, fieldTop());
+    sf::RectangleShape panel(sf::Vector2f{width, fieldHeight});
+    panel.setPosition({0.f, fieldTop()});
     panel.setFillColor(sf::Color(6, 10, 15, 150));
     m_target.draw(panel);
 
@@ -962,8 +954,8 @@ void Renderer::drawHelpPanel() {
   const float left = (width - panelWidth) * 0.5f;
   const float top = fieldTop() + (fieldHeight - panelHeight) * 0.5f;
 
-  sf::RectangleShape panel(sf::Vector2f(panelWidth, panelHeight));
-  panel.setPosition(left, top);
+  sf::RectangleShape panel(sf::Vector2f{panelWidth, panelHeight});
+  panel.setPosition({left, top});
   panel.setFillColor(sf::Color(10, 15, 22, 240));
   panel.setOutlineThickness(2.f);
   panel.setOutlineColor(kHudLine);

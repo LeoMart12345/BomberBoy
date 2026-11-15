@@ -3,43 +3,45 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 
 #include <SFML/Graphics.hpp>
+#include <SFML/System/Exception.hpp>
 
-#include "ai.hpp"
-#include "cli.hpp"
-#include "game.hpp"
-#include "renderer.hpp"
-#include "selftest.hpp"
+#include "cli/cli.hpp"
+#include "core/ai.hpp"
+#include "core/game.hpp"
+#include "render/renderer.hpp"
+#include "tests/selftest.hpp"
 
 namespace {
 
 bb::PlayerInput readPlayerOne() {
   bb::PlayerInput input;
-  input.up = sf::Keyboard::isKeyPressed(sf::Keyboard::W);
-  input.down = sf::Keyboard::isKeyPressed(sf::Keyboard::S);
-  input.left = sf::Keyboard::isKeyPressed(sf::Keyboard::A);
-  input.right = sf::Keyboard::isKeyPressed(sf::Keyboard::D);
+  input.up = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W);
+  input.down = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S);
+  input.left = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A);
+  input.right = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D);
   return input;
 }
 
 bb::PlayerInput readPlayerTwo() {
   bb::PlayerInput input;
-  input.up = sf::Keyboard::isKeyPressed(sf::Keyboard::Up);
-  input.down = sf::Keyboard::isKeyPressed(sf::Keyboard::Down);
-  input.left = sf::Keyboard::isKeyPressed(sf::Keyboard::Left);
-  input.right = sf::Keyboard::isKeyPressed(sf::Keyboard::Right);
+  input.up = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up);
+  input.down = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down);
+  input.left = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Left);
+  input.right = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right);
   return input;
 }
 
 /// Returns the player index a key press drops a bomb for, or -1 for other keys.
 int bombKeyPlayer(sf::Keyboard::Key key) {
-  if (key == sf::Keyboard::Space) {
+  if (key == sf::Keyboard::Key::Space) {
     return 0;
   }
-  if (key == sf::Keyboard::Enter || key == sf::Keyboard::RControl ||
-      key == sf::Keyboard::RShift) {
+  if (key == sf::Keyboard::Key::Enter || key == sf::Keyboard::Key::RControl ||
+      key == sf::Keyboard::Key::RShift) {
     return 1;
   }
   return -1;
@@ -52,7 +54,7 @@ int scaleForDesktop(int requested, const sf::VideoMode& desktop) {
   for (int scale = requested; scale > 1; --scale) {
     const unsigned width = bb::Renderer::kWindowWidth * static_cast<unsigned>(scale);
     const unsigned height = bb::Renderer::kWindowHeight * static_cast<unsigned>(scale);
-    if (width <= desktop.width && height <= desktop.height) {
+    if (width <= desktop.size.x && height <= desktop.size.y) {
       return scale;
     }
   }
@@ -82,25 +84,26 @@ void playDemo(bb::Game& game, float seconds) {
 }
 
 bool saveScreenshot(const std::string& path, bool hasSeed, std::uint32_t seed, float autoplay) {
-  sf::RenderTexture target;
-  if (!target.create(bb::Renderer::kWindowWidth, bb::Renderer::kWindowHeight)) {
-    std::cerr << "error: could not create an offscreen render target\n";
-    return false;
-  }
+  try {
+    sf::RenderTexture target({bb::Renderer::kWindowWidth, bb::Renderer::kWindowHeight});
 
-  bb::Game game = hasSeed ? bb::Game(seed) : bb::Game();
-  if (autoplay > 0.0f) {
-    playDemo(game, autoplay);
-  }
+    bb::Game game = hasSeed ? bb::Game(seed) : bb::Game();
+    if (autoplay > 0.0f) {
+      playDemo(game, autoplay);
+    }
 
-  bb::Renderer renderer(target);
-  bb::UiState ui;
-  ui.showFps = false;  // clean capture for the README
-  renderer.draw(game, ui);
-  target.display();
+    bb::Renderer renderer(target);
+    bb::UiState ui;
+    ui.showFps = false;  // clean capture for the README
+    renderer.draw(game, ui);
+    target.display();
 
-  if (!target.getTexture().copyToImage().saveToFile(path)) {
-    std::cerr << "error: could not write " << path << "\n";
+    if (!target.getTexture().copyToImage().saveToFile(path)) {
+      std::cerr << "error: could not write " << path << "\n";
+      return false;
+    }
+  } catch (const sf::Exception& error) {
+    std::cerr << "error: could not create an offscreen render target: " << error.what() << '\n';
     return false;
   }
 
@@ -112,24 +115,25 @@ bool saveScreenshot(const std::string& path, bool hasSeed, std::uint32_t seed, f
 /// `bomberboy-shot-<n>.png`. Must run after the frame was drawn and before it is
 /// displayed, which is when the window still holds the finished frame.
 bool saveWindowShot(sf::RenderWindow& window, int& shotNumber) {
-  sf::Texture frame;
-  if (!frame.create(window.getSize().x, window.getSize().y)) {
-    std::cerr << "error: could not create a texture for the screenshot\n";
+  try {
+    sf::Texture frame(window.getSize());
+    frame.update(window);
+    const sf::Image image = frame.copyToImage();
+
+    std::string path;
+    do {
+      path = "bomberboy-shot-" + std::to_string(++shotNumber) + ".png";
+    } while (std::ifstream(path).good());
+
+    if (!image.saveToFile(path)) {
+      std::cerr << "error: could not write " << path << "\n";
+      return false;
+    }
+    std::cout << "wrote " << path << " (" << image.getSize().x << "x" << image.getSize().y << ")\n";
+  } catch (const sf::Exception& error) {
+    std::cerr << "error: could not capture the window: " << error.what() << '\n';
     return false;
   }
-  frame.update(window);
-  const sf::Image image = frame.copyToImage();
-
-  std::string path;
-  do {
-    path = "bomberboy-shot-" + std::to_string(++shotNumber) + ".png";
-  } while (std::ifstream(path).good());
-
-  if (!image.saveToFile(path)) {
-    std::cerr << "error: could not write " << path << "\n";
-    return false;
-  }
-  std::cout << "wrote " << path << " (" << image.getSize().x << "x" << image.getSize().y << ")\n";
   return true;
 }
 
@@ -186,18 +190,21 @@ int main(int argc, char** argv) {
               << "x - the window was scaled down and the canvas is letterboxed\n";
   }
 
-  const sf::VideoMode windowedMode(bb::Renderer::kWindowWidth * static_cast<unsigned>(scale),
-                                   bb::Renderer::kWindowHeight * static_cast<unsigned>(scale));
+  const sf::VideoMode windowedMode(
+      {bb::Renderer::kWindowWidth * static_cast<unsigned>(scale),
+       bb::Renderer::kWindowHeight * static_cast<unsigned>(scale)});
 
-  sf::RenderWindow window;
-  window.create(options.fullscreen ? desktop : windowedMode, "BomberBoy",
-                options.fullscreen ? sf::Style::Fullscreen : sf::Style::Default);
+  sf::RenderWindow window(options.fullscreen ? desktop : windowedMode, "BomberBoy",
+                          sf::Style::Default,
+                          options.fullscreen ? sf::State::Fullscreen : sf::State::Windowed);
 
   // Start in the middle of the desktop instead of wherever the window manager
   // feels like - a scaled-up window can otherwise open with its HUD off-screen.
   const sf::Vector2i centred(
-      std::max(0, (static_cast<int>(desktop.width) - static_cast<int>(windowedMode.width)) / 2),
-      std::max(0, (static_cast<int>(desktop.height) - static_cast<int>(windowedMode.height)) / 2));
+      {std::max(0, (static_cast<int>(desktop.size.x) -
+                    static_cast<int>(windowedMode.size.x)) / 2),
+       std::max(0, (static_cast<int>(desktop.size.y) -
+                    static_cast<int>(windowedMode.size.y)) / 2)});
 
   if (!options.fullscreen) {
     window.setPosition(centred);
@@ -221,7 +228,8 @@ int main(int argc, char** argv) {
   // OpenGL context, so the font and the sprite textures have to be reloaded.
   const auto applyWindowMode = [&](bool wantFullscreen) {
     const sf::VideoMode mode = wantFullscreen ? sf::VideoMode::getDesktopMode() : windowedMode;
-    window.create(mode, "BomberBoy", wantFullscreen ? sf::Style::Fullscreen : sf::Style::Default);
+    window.create(mode, "BomberBoy", sf::Style::Default,
+                  wantFullscreen ? sf::State::Fullscreen : sf::State::Windowed);
     window.setFramerateLimit(static_cast<unsigned>(options.frameCap));
     window.setKeyRepeatEnabled(false);
     window.setView(bb::Renderer::viewFor(window.getSize()));
@@ -247,20 +255,20 @@ int main(int argc, char** argv) {
   std::array<bool, bb::kPlayerCount> bombPressed{};
 
   while (window.isOpen()) {
-    sf::Event event;
-    while (window.pollEvent(event)) {
-      if (event.type == sf::Event::Closed) {
+    while (const std::optional event = window.pollEvent()) {
+      if (event->is<sf::Event::Closed>()) {
         window.close();
-      } else if (event.type == sf::Event::Resized) {
+      } else if (event->is<sf::Event::Resized>()) {
         window.setView(bb::Renderer::viewFor(window.getSize()));
-      } else if (event.type == sf::Event::LostFocus) {
+      } else if (event->is<sf::Event::FocusLost>()) {
         // Do not let a round run on while the player is in another window.
         if (game.state() == bb::RoundState::Playing) {
           paused = true;
         }
         bombPressed = {};
-      } else if (event.type == sf::Event::KeyPressed) {
-        if (event.key.code == sf::Keyboard::Escape) {
+      } else if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>()) {
+        const sf::Keyboard::Key key = keyPressed->code;
+        if (key == sf::Keyboard::Key::Escape) {
           // Closing the panel with Esc is what everyone tries first; quitting by
           // accident while reading the controls would be a nasty surprise.
           if (showHelp) {
@@ -268,7 +276,7 @@ int main(int argc, char** argv) {
           } else {
             window.close();
           }
-        } else if (event.key.code == sf::Keyboard::R) {
+        } else if (key == sf::Keyboard::Key::R) {
           if (game.matchOver()) {
             game.resetMatch();
           } else {
@@ -277,26 +285,26 @@ int main(int argc, char** argv) {
           paused = false;
           bombPressed = {};
           brain.reset();
-        } else if (event.key.code == sf::Keyboard::P) {
+        } else if (key == sf::Keyboard::Key::P) {
           paused = !paused;
           bombPressed = {};
-        } else if (event.key.code == sf::Keyboard::C) {
+        } else if (key == sf::Keyboard::Key::C) {
           cpuOpponent = !cpuOpponent;
           bombPressed = {};
           brain.reset();
-        } else if (event.key.code == sf::Keyboard::F1) {
+        } else if (key == sf::Keyboard::Key::F1) {
           showHelp = !showHelp;
           bombPressed = {};
-        } else if (event.key.code == sf::Keyboard::F2) {
+        } else if (key == sf::Keyboard::Key::F2) {
           shotRequested = true;
-        } else if (event.key.code == sf::Keyboard::F3) {
+        } else if (key == sf::Keyboard::Key::F3) {
           showFps = !showFps;
-        } else if (event.key.code == sf::Keyboard::F11) {
+        } else if (key == sf::Keyboard::Key::F11) {
           fullscreen = !fullscreen;
           applyWindowMode(fullscreen);
           bombPressed = {};
         } else {
-          const int who = bombKeyPlayer(event.key.code);
+          const int who = bombKeyPlayer(key);
           if (who >= 0) {
             bombPressed[static_cast<std::size_t>(who)] = true;
           }

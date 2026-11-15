@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <random>
 
-#include "game.hpp"
+#include "core/game.hpp"
 
 namespace bb {
 

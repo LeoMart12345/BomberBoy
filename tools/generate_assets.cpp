@@ -8,19 +8,19 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <string>
 #include <vector>
-#include <string>
 
 namespace {
 
 constexpr int kSize = 16;
 
 sf::Color rgb(int r, int g, int b, int a = 255) {
-  return sf::Color(static_cast<sf::Uint8>(r), static_cast<sf::Uint8>(g),
-                   static_cast<sf::Uint8>(b), static_cast<sf::Uint8>(a));
+  return sf::Color(static_cast<std::uint8_t>(r), static_cast<std::uint8_t>(g),
+                   static_cast<std::uint8_t>(b), static_cast<std::uint8_t>(a));
 }
 
 enum class Facing { Down = 0, Up = 1, Left = 2, Right = 3 };
@@ -29,31 +29,32 @@ enum class Facing { Down = 0, Up = 1, Left = 2, Right = 3 };
 /// sprite set without an art tool.
 class Canvas {
  public:
-  Canvas() { m_image.create(kSize, kSize, sf::Color(0, 0, 0, 0)); }
+  Canvas() : m_image(sf::Vector2u{kSize, kSize}, sf::Color(0, 0, 0, 0)) {}
 
   void pixel(int x, int y, sf::Color colour) {
     if (x < 0 || y < 0 || x >= kSize || y >= kSize || colour.a == 0) {
       return;
     }
     if (colour.a == 255) {
-      m_image.setPixel(static_cast<unsigned>(x), static_cast<unsigned>(y), colour);
+      m_image.setPixel({static_cast<unsigned>(x), static_cast<unsigned>(y)}, colour);
       return;
     }
-    const sf::Color under = m_image.getPixel(static_cast<unsigned>(x), static_cast<unsigned>(y));
+    const sf::Color under = m_image.getPixel({static_cast<unsigned>(x), static_cast<unsigned>(y)});
     const float src = colour.a / 255.f;
     const float dst = under.a / 255.f;
     const float out = src + dst * (1.f - src);
     if (out <= 0.f) {
-      m_image.setPixel(static_cast<unsigned>(x), static_cast<unsigned>(y), sf::Color(0, 0, 0, 0));
+      m_image.setPixel({static_cast<unsigned>(x), static_cast<unsigned>(y)}, sf::Color(0, 0, 0, 0));
       return;
     }
-    const auto mix = [&](sf::Uint8 s, sf::Uint8 d) {
+    const auto mix = [&](std::uint8_t s, std::uint8_t d) {
       const float value = (s * src + d * dst * (1.f - src)) / out;
-      return static_cast<sf::Uint8>(std::lround(std::clamp(value, 0.f, 255.f)));
+      return static_cast<std::uint8_t>(std::lround(std::clamp(value, 0.f, 255.f)));
     };
-    m_image.setPixel(static_cast<unsigned>(x), static_cast<unsigned>(y),
+    m_image.setPixel({static_cast<unsigned>(x), static_cast<unsigned>(y)},
                      sf::Color(mix(colour.r, under.r), mix(colour.g, under.g),
-                               mix(colour.b, under.b), static_cast<sf::Uint8>(std::lround(out * 255.f))));
+                               mix(colour.b, under.b),
+                               static_cast<std::uint8_t>(std::lround(out * 255.f))));
   }
 
   void rect(int x, int y, int w, int h, sf::Color colour) {
@@ -108,11 +109,11 @@ class Canvas {
     if (x < 0 || y < 0 || x >= kSize || y >= kSize) {
       return;
     }
-    m_image.setPixel(static_cast<unsigned>(x), static_cast<unsigned>(y), sf::Color(0, 0, 0, 0));
+    m_image.setPixel({static_cast<unsigned>(x), static_cast<unsigned>(y)}, sf::Color(0, 0, 0, 0));
   }
 
   bool save(const std::filesystem::path& path) const {
-    if (!m_image.saveToFile(path.string())) {
+    if (!m_image.saveToFile(path)) {
       std::fprintf(stderr, "error: could not write %s\n", path.string().c_str());
       return false;
     }
